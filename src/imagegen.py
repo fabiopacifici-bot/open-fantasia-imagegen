@@ -1,21 +1,38 @@
 import torch
-from diffusers import StableDiffusionPipeline
+from diffusers import Flux2KleinPipeline
 
-class LocalImageGen:
-    def __init__(self, model_name="stabilityai/stable-diffusion-2", device=None):
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self.pipe = StableDiffusionPipeline.from_pretrained(model_name)
-        self.pipe.to(self.device)
+def enhance_prompt(prompt):
+    # Basic enhancement logic; expand as needed
+    enhanced = (
+        "Create a visually striking scene: " +
+        prompt +
+        ". Use strong contrasts, cinematic lighting, and clear details."
+    )
+    return enhanced
 
-    def generate(self, prompt, out_path):
-        image = self.pipe(prompt).images[0]
-        image.save(out_path)
-        return out_path
+device = "cuda"
+dtype = torch.bfloat16
+
+pipe = Flux2KleinPipeline.from_pretrained(
+    "black-forest-labs/FLUX.2-klein-base-9B", torch_dtype=dtype
+)
+pipe.enable_model_cpu_offload()  # save some VRAM by offloading the model to CPU
 
 if __name__ == "__main__":
     import sys
-    prompt = sys.argv[1] if len(sys.argv) > 1 else "a black cat sitting on the head of its human"
-    out = sys.argv[2] if len(sys.argv) > 2 else "output.png"
-    gen = LocalImageGen()
-    gen.generate(prompt, out)
+    prompt = sys.argv[1] if len(sys.argv) > 1 else "A cat holding a sign that says hello world"
+    out = sys.argv[2] if len(sys.argv) > 2 else "flux-klein.png"
+
+    enhanced = enhance_prompt(prompt)
+    print(f"Original prompt: {prompt}")
+    print(f"Enhanced prompt: {enhanced}")
+    image = pipe(
+        enhanced,
+        height=1024,
+        width=1024,
+        guidance_scale=4.0,
+        num_inference_steps=50,
+        generator=torch.Generator(device=device).manual_seed(0)
+    ).images[0]
+    image.save(out)
     print(f"Image saved: {out}")

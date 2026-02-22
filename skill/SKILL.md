@@ -8,6 +8,10 @@ A local HuggingFace-based image generation skill for OpenClaw. Enables models li
 - Run: `python src/imagegen.py "prompt" out.png`
 - Integrate via OpenClaw skill system (see README)
 
+## Pipeline Workflow
+- **Prompt enhancement** is now the first step in the pipeline. When you use this skill, your raw prompt is automatically clarified, expanded, and visually enriched before passing it to the generator.
+- After enhancement, the improved prompt is used straight for image creation and the output is returned.
+
 ## API & CLI Options
 - Prompt: input text
 - Output: image file
