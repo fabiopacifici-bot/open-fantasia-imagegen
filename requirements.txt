@@ -3,3 +3,6 @@ torch
 transformers
 Pillow
 numpy
+python-dotenv
+accelerate
+sentencepiece

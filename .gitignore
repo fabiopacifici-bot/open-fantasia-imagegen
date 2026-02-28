@@ -1,0 +1,29 @@
+# Environment variables
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Model outputs & generated images
+output/
+*.png
+*.jpg
+*.jpeg
+*.webp
+
+# Flux submodule build artifacts
+flux/src/*.egg-info/
+flux/output/
+
+# Editor
+.idea/
+.vscode/
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
