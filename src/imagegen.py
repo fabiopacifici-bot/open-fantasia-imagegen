@@ -16,7 +16,7 @@ def get_pipeline(model_id=None):
         hf_token = os.environ.get("HF_TOKEN")
         model_id = (
             "black-forest-labs/FLUX.1-schnell" if hf_token
-            else "stabilityai/stable-diffusion-2-1"
+            else "stable-diffusion-v1-5/stable-diffusion-v1-5"
         )
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
