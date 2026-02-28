@@ -1,25 +1,30 @@
+---
+name: open-fantasia-imagegen
+description: Local image generation with FLUX or Stable Diffusion. Generate images from text prompts on your GPU.
+metadata:
+  version: 1.0.0
+---
+
 # Open Fantasia — Image Generation Skill
 
-## Trigger
-Slash command: `/fantasia <prompt> [--quality low|mid|high]`
+## Slash Command
+`/fantasia <prompt> [--quality low|mid|high]`
 
 ## Description
 Generate images locally on GPU using the persistent Open Fantasia inference server.
 Model stays loaded in VRAM — near-instant generation after first startup.
 
+## When called without prompt
+Show this help menu with inline buttons for quality selection.
+
+---
+
 ## Usage Examples
 ```
-/fantasia Generate an image of the man on the moon
-/fantasia a cat civilization in a fantasy medieval city --quality high
+/fantasia a samurai cat at sunset
+/fantasia cyberpunk city at night --quality high
 /fantasia quick sketch of a robot --quality low
-/fantasia photorealistic sunset over the ocean --quality mid
 ```
-
-## How It Works
-1. Parse the prompt and optional `--quality` flag from the message
-2. Check if server is alive at `http://localhost:8765/health`
-3. POST to `http://localhost:8765/generate` with prompt + quality
-4. Receive PNG bytes → save to workspace → send via Telegram
 
 ## Quality Presets
 | Flag      | Resolution | Steps | Speed     |
@@ -30,6 +35,46 @@ Model stays loaded in VRAM — near-instant generation after first startup.
 
 Default: `mid`
 
+---
+
+## Agent Instructions
+
+### When `/fantasia` is called WITHOUT a prompt:
+Send this formatted message with inline buttons:
+
+> 🪄 **Open Fantasia** — Local Image Generator
+> 
+> Generate images on your GPU. Near-instant after first load.
+> 
+> **Usage:** `/fantasia <prompt> [--quality low|mid|high]`
+> 
+> **Quality presets:**
+> - 🔹 Low — 256×256, 4 steps (~1s)
+> - 🔷 Mid — 512×512, 20 steps (~5s)
+> - 🔶 High — 1024×1024, 50 steps (~30s)
+> 
+> **Examples:**
+> - `/fantasia a calm forest at dawn`
+> - `/fantasia cyberpunk skyline --quality high`
+> - `/fantasia quick cat sketch --quality low`
+
+Then send inline buttons:
+- `Low 🔹` | `Mid 🔷` | `High 🔶` (callback_data: `fantasia_quality:low`, `fantasia_quality:mid`, `fantasia_quality:high`)
+
+### When `/fantasia` is called WITH a prompt:
+1. Extract everything after `/fantasia` as the prompt
+2. Check for `--quality low|mid|high` flag; strip it from prompt; default `mid`
+3. Check server health: `GET http://localhost:8765/health`
+   - If down: reply "🚫 Open Fantasia server is offline. Start it with: `cd repositories/open-fantasia-imagegen && .venv/bin/python src/server.py`"
+4. POST to `http://localhost:8765/generate`:
+   ```json
+   {"prompt": "<extracted prompt>", "quality": "<quality>", "enhance": true}
+   ```
+5. Save response PNG to `repositories/open-fantasia-imagegen/outputs/fantasia_<timestamp>.png`
+6. Send via Telegram with caption: `🎨 /fantasia — <short prompt preview>`
+
+---
+
 ## Server Setup (run once)
 ```bash
 cd repositories/open-fantasia-imagegen
@@ -37,14 +82,13 @@ cd repositories/open-fantasia-imagegen
 ```
 Server persists at `localhost:8765`. Restart if machine reboots.
 
-## Agent Instructions
-When `/fantasia` is invoked:
-1. Extract everything after `/fantasia` as the prompt
-2. Check for `--quality low|mid|high` flag; strip it from prompt; default `mid`
-3. POST to `http://localhost:8765/generate`:
-   ```json
-   {"prompt": "<extracted prompt>", "quality": "<quality>", "enhance": true}
-   ```
-4. Save response PNG to `/home/pacificDev/.openclaw/workspace/outputs/fantasia_out.png`
-5. Send via Telegram to user with a short caption
-6. If server is down (connection refused), reply: "Open Fantasia server is offline. Start it with: `.venv/bin/python src/server.py` in the open-fantasia-imagegen repo."
+## Output Location
+Generated images are stored in:
+`repositories/open-fantasia-imagegen/outputs/`
+
+---
+
+## Troubleshooting
+- **Connection refused:** Server not running — start it with the command above
+- **CUDA out of memory:** Use `--quality low` or reduce steps
+- **Slow first run:** Model loading from disk (~30s) — subsequent runs are instant
