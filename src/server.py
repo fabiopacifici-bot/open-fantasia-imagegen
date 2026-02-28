@@ -78,7 +78,7 @@ def generate(req: GenerateRequest):
     if req.enhance:
         prompt = enhance_prompt(prompt)
 
-    print(f'Generating [{req.quality}] {w}x{h} @ {s} steps — "{req.prompt}"')
+    print(f"Generating [{req.quality}] {w}x{h} @ {s} steps — \"{prompt}\"")
 
     generator = torch.Generator(device=_device).manual_seed(req.seed)
     is_flux = hasattr(_pipe, "transformer")
@@ -94,6 +94,15 @@ def generate(req: GenerateRequest):
         kwargs["guidance_scale"] = req.guidance
 
     image = _pipe(**kwargs).images[0]
+
+    # Store generated images under the outputs/ directory to separate from working space
+    out_dir = os.path.join(os.path.dirname(__file__), "../outputs")
+    os.makedirs(out_dir, exist_ok=True)
+    from PIL import Image
+    import datetime
+    filename = f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+    path = os.path.join(out_dir, filename)
+    image.save(path)
 
     buf = io.BytesIO()
     image.save(buf, format="PNG")

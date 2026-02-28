@@ -45,6 +45,6 @@ When `/fantasia` is invoked:
    ```json
    {"prompt": "<extracted prompt>", "quality": "<quality>", "enhance": true}
    ```
-4. Save response PNG to `/home/pacificDev/.openclaw/workspace/fantasia_out.png`
+4. Save response PNG to `/home/pacificDev/.openclaw/workspace/outputs/fantasia_out.png`
 5. Send via Telegram to user with a short caption
 6. If server is down (connection refused), reply: "Open Fantasia server is offline. Start it with: `.venv/bin/python src/server.py` in the open-fantasia-imagegen repo."
