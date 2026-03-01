@@ -27,6 +27,7 @@ QUALITY_PRESETS = {
 DEFAULT_MODEL      = "black-forest-labs/FLUX.1-schnell"
 FULL_MODEL_KLEIN   = "black-forest-labs/FLUX.2-klein-base-9B"
 FULL_MODEL_SD15    = "stable-diffusion-v1-5/stable-diffusion-v1-5"
+Z_IMG_MODEL        = "Zhibei-ai/Z-Img"
 
 # GGUF fallback (slower on most GPUs due to CPU dequant, kept for low-VRAM setups)
 DEFAULT_GGUF_REPO  = "city96/FLUX.1-schnell-gguf"
@@ -49,8 +50,13 @@ def resolve_size(quality=None, width=None, height=None, steps=None):
     return width or 512, height or 512, steps or 4
 
 
-def get_pipeline(model_id=None):
-    """Load image generation pipeline. Supports HF model IDs and GGUF paths/repos."""
+def get_pipeline(model_id=None, quant="autoquant"):
+    """Load image generation pipeline. Supports HF model IDs and GGUF paths/repos.
+
+    Args:
+        model_id: HuggingFace model ID, GGUF path/repo, or None (uses DEFAULT_MODEL).
+        quant: Quantization mode — "none", "autoquant" (default), or "int4".
+    """
     hf_token = os.environ.get("HF_TOKEN")
 
     if model_id is None:
@@ -60,7 +66,7 @@ def get_pipeline(model_id=None):
     dtype  = torch.bfloat16 if device == "cuda" else torch.float32
     token  = hf_token or True
 
-    print(f"Loading model: {model_id} on {device}")
+    print(f"Loading model: {model_id} on {device} (quant={quant})")
 
     if is_gguf(model_id):
         # ── GGUF path: slower on most GPUs (CPU dequant), kept for low-VRAM setups ──
@@ -100,18 +106,18 @@ def get_pipeline(model_id=None):
         pipe = Flux2KleinPipeline.from_pretrained(model_id, torch_dtype=dtype, token=token)
         pipe = pipe.to(device)
 
+    elif "z-img" in model_id.lower() or "zhibei" in model_id.lower():
+        # ── Z-Img: 6B single-stream diffusion transformer, loaded as FluxPipeline ──
+        print(f"Detected Z-Img model ({Z_IMG_MODEL}), loading with FluxPipeline...")
+        pipe = FluxPipeline.from_pretrained(model_id, torch_dtype=torch.bfloat16, token=token)
+        pipe = pipe.to(device)
+        pipe = _apply_quant(pipe, quant, device)
+
     elif "FLUX" in model_id or "flux" in model_id:
-        # ── FLUX BF16 + torchao int8 quantization — native CUDA, fast ──
-        try:
-            from torchao.quantization import autoquant
-            pipe = FluxPipeline.from_pretrained(model_id, torch_dtype=dtype, token=token)
-            pipe = pipe.to(device)
-            pipe.transformer = autoquant(pipe.transformer, error_on_unseen=False)
-            print("torchao autoquant applied to transformer ✅")
-        except Exception as e:
-            print(f"torchao unavailable ({e}), falling back to BF16")
-            pipe = FluxPipeline.from_pretrained(model_id, torch_dtype=dtype, token=token)
-            pipe = pipe.to(device)
+        # ── FLUX BF16 + optional quantization ──
+        pipe = FluxPipeline.from_pretrained(model_id, torch_dtype=dtype, token=token)
+        pipe = pipe.to(device)
+        pipe = _apply_quant(pipe, quant, device)
 
     else:
         pipe = StableDiffusionPipeline.from_pretrained(model_id, torch_dtype=dtype, token=token)
@@ -119,6 +125,38 @@ def get_pipeline(model_id=None):
         pipe = pipe.to(device)
 
     return pipe, device
+
+
+def _apply_quant(pipe, quant: str, device: str):
+    """Apply torchao quantization to the transformer in-place."""
+    if quant == "autoquant":
+        try:
+            from torchao.quantization import autoquant
+            pipe.transformer = autoquant(pipe.transformer, error_on_unseen=False)
+            print("torchao autoquant applied to transformer ✅")
+        except Exception as e:
+            print(f"torchao autoquant unavailable ({e}), falling back to BF16")
+    elif quant == "int4":
+        try:
+            import torchao
+            from torchao.quantization import quantize_
+            try:
+                # torchao >= 0.4: Int4WeightOnlyQuantizedLinear via quantize_ API
+                from torchao.quantization import int4_weight_only
+                quantize_(pipe.transformer, int4_weight_only())
+                print("torchao int4 weight-only quantization applied to transformer ✅")
+            except ImportError:
+                # Older torchao fallback
+                from torchao.quantization.quant_api import Int4WeightOnlyQuantizedLinear
+                torchao.quantization.quantize_(pipe.transformer, Int4WeightOnlyQuantizedLinear())
+                print("torchao int4 weight-only quantization (legacy) applied to transformer ✅")
+        except Exception as e:
+            print(f"torchao int4 unavailable ({e}), falling back to BF16")
+    elif quant == "none":
+        print("Quantization disabled — running pure BF16")
+    else:
+        print(f"Unknown quant mode '{quant}', skipping quantization")
+    return pipe
 
 
 def enhance_prompt(prompt):
@@ -132,11 +170,11 @@ def enhance_prompt(prompt):
 
 def generate(prompt, output="output.png", model_id=None, enhance=True,
              quality=None, height=None, width=None, steps=None,
-             guidance=7.5, seed=42):
+             guidance=7.5, seed=42, quant="autoquant"):
     """Generate an image from a text prompt."""
     w, h, s = resolve_size(quality=quality, width=width, height=height, steps=steps)
 
-    pipe, device = get_pipeline(model_id)
+    pipe, device = get_pipeline(model_id, quant=quant)
 
     if enhance:
         enhanced = enhance_prompt(prompt)
@@ -171,7 +209,7 @@ if __name__ == "__main__":
     parser.add_argument("--prompt", type=str, required=True, help="Text prompt.")
     parser.add_argument("--output", type=str, default="output.png", help="Output file path.")
     parser.add_argument("--model", type=str, default=None,
-                        help="Model ID or GGUF path. Default: city96/FLUX.1-schnell-gguf/flux1-schnell-Q4_K_S.gguf")
+                        help="Model ID or GGUF path. Default: black-forest-labs/FLUX.1-schnell")
     parser.add_argument("--no-enhance", action="store_true", help="Skip prompt enhancement.")
     parser.add_argument("--quality", type=str, choices=["low", "mid", "high"],
                         help="Quality preset: low (512px/4 steps), mid (768px/8 steps), high (1024px/20 steps).")
@@ -180,6 +218,8 @@ if __name__ == "__main__":
     parser.add_argument("--steps", type=int, default=None)
     parser.add_argument("--guidance", type=float, default=7.5)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--quant", type=str, default="autoquant", choices=["none", "autoquant", "int4"],
+                        help="Quantization mode: none, autoquant (default), int4.")
     args = parser.parse_args()
 
     generate(
@@ -193,4 +233,5 @@ if __name__ == "__main__":
         steps=args.steps,
         guidance=args.guidance,
         seed=args.seed,
+        quant=args.quant,
     )

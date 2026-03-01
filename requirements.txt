@@ -11,3 +11,4 @@ uvicorn
 torchao
 bitsandbytes
 huggingface_hub
+qwen-vl-utils

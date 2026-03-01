@@ -41,8 +41,9 @@ The model (`black-forest-labs/FLUX.1-schnell`) is downloaded automatically by di
 | `--raw`         | Prompt sent directly to the model — no enhancement. |
 | `--enhance`     | (default) AI polishes your prompt before generation. |
 | `--count N`     | Generate N images (1–4). Each uses a different seed. |
-| `--model X`     | Select model: `schnell` (default BF16), `klein`, `sd15`. |
+| `--model X`     | Select model: `schnell` (default BF16), `klein`, `sd15`, `z-img`. |
 | `--quality X`   | `low` / `mid` / `high` (see presets below). |
+| `--quant X`     | Quantization: `autoquant` (default), `int4`, or `none`. |
 
 ## Quality Presets
 | Flag      | Resolution  | Steps | Speed (RTX 4090) |
@@ -73,6 +74,7 @@ Send this formatted message with inline buttons:
 > - ⚡ FLUX.1-schnell BF16 — best quality (default, ~34GB / autoquant available)
 > - 🌸 FLUX.2-klein — lighter experimental
 > - 🎨 SD 1.5 — classic fallback
+> - 🔷 Z-Img — 6B single-stream diffusion (Zhibei-ai/Z-Img)
 >
 > **Quality presets:**
 > - 🔹 Low — 512×512, 4 steps (~2-3 min RTX 4090)
@@ -111,13 +113,15 @@ Main session stays responsive throughout.
    - `schnell` → `black-forest-labs/FLUX.1-schnell`
    - `klein`   → `black-forest-labs/FLUX.2-klein-base-9B`
    - `sd15`    → `stable-diffusion-v1-5/stable-diffusion-v1-5`
-5. Check for `--raw`: set `enhance: false`; else `enhance: true` (default)
+   - `z-img`   → `Zhibei-ai/Z-Img`
+5. Check for `--quant none|autoquant|int4`; strip it; default `autoquant`
+6. Check for `--raw`: set `enhance: false`; else `enhance: true` (default)
 6. Check server health: `GET http://localhost:8765/health`
    - If down: reply "🚫 Fantasia offline — restarting..." → `systemctl --user restart fantasia.service` → wait 20s → retry
    - If model mismatch: update `~/.config/systemd/user/fantasia.service` ExecStart with correct `--model`, daemon-reload, restart, wait 20s
 7. POST to `http://localhost:8765/generate`:
    ```json
-   {"prompt": "<prompt>", "quality": "<quality>", "enhance": <bool>, "count": <N>}
+   {"prompt": "<prompt>", "quality": "<quality>", "enhance": <bool>, "count": <N>, "quant": "<quant>"}
    ```
    Server saves all images to `~/.openclaw/media/fantasia/<timestamp>_<i>.png`
 8. Send each image via Telegram with caption: `🎨 /fantasia — <short prompt preview> [<i>/<N>]`
@@ -164,3 +168,77 @@ On Windows WSL: `\\wsl$\kali-linux\home\<user>\.openclaw\media\fantasia\`
 - **OOM error:** Switch to `--quality low` or use `--model sd15`
 - **Connection refused:** `systemctl --user restart fantasia.service`; check logs: `journalctl --user -u fantasia.service -n 50`
 - **First run slow:** Model downloads from HuggingFace on first run (~34GB), then loads from disk each restart (~10-20s)
+
+---
+
+## Quantization Modes
+
+| Mode         | Description | VRAM savings | Speed |
+|--------------|-------------|--------------|-------|
+| `autoquant`  | torchao auto-selects best int8 kernel (default) | ~40% | fastest |
+| `int4`       | torchao int4 weight-only, maximum VRAM savings | ~60% | fast, minor quality loss |
+| `none`       | Pure BF16, no quantization | 0% | baseline |
+
+### CLI usage
+```bash
+python src/imagegen.py --prompt "a sunset" --quant int4
+python src/server.py --model black-forest-labs/FLUX.1-schnell --quant int4
+```
+
+### Server API
+Pass `"quant"` in the generate request (note: quant is set at server startup; request field logs a warning if it differs from loaded mode):
+```json
+{"prompt": "a sunset", "quant": "int4"}
+```
+
+---
+
+## Z-Img Model
+
+**Z-Img** is a 6B single-stream diffusion transformer. HuggingFace ID: `Zhibei-ai/Z-Img`
+
+Loaded via `FluxPipeline` (same single-stream transformer architecture). Supports the same quality presets and quantization options as FLUX.
+
+### Usage
+```bash
+/fantasia a dragon --model z-img
+python src/imagegen.py --prompt "a dragon" --model Zhibei-ai/Z-Img
+```
+
+The server/CLI auto-detects `z-img` or `zhibei` in the model ID (case-insensitive).
+
+---
+
+## /edit Endpoint — Visual Understanding (v2 stub)
+
+> ⚠️ **v2 stub**: This uses Qwen2.5-VL-7B-Instruct for **visual understanding**, not pixel-level editing.
+> True diffusion inpainting (pixel editing) is planned for **v2.1**.
+
+The model is loaded **lazily** — only when the first `/edit` request arrives. Loaded in 4-bit via bitsandbytes to minimize VRAM.
+
+### POST /edit
+```json
+{
+  "image": "/path/to/image.png",
+  "instruction": "make the sky purple",
+  "max_new_tokens": 512
+}
+```
+Returns:
+```json
+{
+  "response": "The sky in the image could be changed to a vibrant purple by...",
+  "model": "Qwen/Qwen2.5-VL-7B-Instruct",
+  "note": "v2 stub: This is visual understanding (VL), not pixel-level editing. True diffusion inpainting is planned for v2.1."
+}
+```
+
+### GET /edit/status
+```json
+{"loaded": false, "model": "Qwen/Qwen2.5-VL-7B-Instruct"}
+```
+
+### Notes
+- Requires `bitsandbytes` installed (already in requirements.txt)
+- If FLUX is loaded simultaneously, warns about potential OOM on GPUs < 24GB
+- Images must be local file paths (not URLs)
