@@ -8,7 +8,7 @@ metadata:
 # Open Fantasia — Image Generation Skill
 
 ## Slash Command
-`/fantasia <prompt> [--quality low|mid|high] [--model schnell|klein|sd15] [--count 1-4] [--raw|--enhance]`
+`/fantasia <prompt> [--quality low|mid|high] [--model schnell|klein|sd15|turbo|turbo-xl] [--count 1-4] [--raw|--enhance]`
 
 ## Description
 Generate images locally on GPU using the persistent Open Fantasia inference server.
@@ -41,7 +41,7 @@ The model (`black-forest-labs/FLUX.1-schnell`) is downloaded automatically by di
 | `--raw`         | Prompt sent directly to the model — no enhancement. |
 | `--enhance`     | (default) AI polishes your prompt before generation. |
 | `--count N`     | Generate N images (1–4). Each uses a different seed. |
-| `--model X`     | Select model: `schnell` (default BF16), `klein`, `sd15`, `z-img`. |
+| `--model X`     | Select model: `schnell` (default BF16), `klein`, `sd15`, `z-img`, `turbo`, `turbo-xl`. |
 | `--quality X`   | `low` / `mid` / `high` (see presets below). |
 | `--quant X`     | Quantization: `autoquant` (default), `int4`, or `none`. |
 
@@ -75,6 +75,8 @@ Send this formatted message with inline buttons:
 > - 🌸 FLUX.2-klein — lighter experimental
 > - 🎨 SD 1.5 — classic fallback
 > - 🔷 Z-Img — 6B single-stream diffusion (Zhibei-ai/Z-Img)
+> - ⚡ SD-Turbo — 1-3s, 2GB VRAM, ideal for quick drafts
+> - ⚡ SDXL-Turbo — 2-5s, 6GB VRAM, better quality
 >
 > **Quality presets:**
 > - 🔹 Low — 512×512, 4 steps (~2-3 min RTX 4090)
@@ -114,6 +116,8 @@ Main session stays responsive throughout.
    - `klein`   → `black-forest-labs/FLUX.2-klein-base-9B`
    - `sd15`    → `stable-diffusion-v1-5/stable-diffusion-v1-5`
    - `z-img`   → `Zhibei-ai/Z-Img`
+   - `turbo`   → `stabilityai/sd-turbo`
+   - `turbo-xl`→ `stabilityai/sdxl-turbo`
 5. Check for `--quant none|autoquant|int4`; strip it; default `autoquant`
 6. Check for `--raw`: set `enhance: false`; else `enhance: true` (default)
 6. Check server health: `GET http://localhost:8765/health`
@@ -189,6 +193,32 @@ python src/server.py --model black-forest-labs/FLUX.1-schnell --quant int4
 Pass `"quant"` in the generate request (note: quant is set at server startup; request field logs a warning if it differs from loaded mode):
 ```json
 {"prompt": "a sunset", "quant": "int4"}
+```
+
+---
+
+## Turbo Models (SD-Turbo / SDXL-Turbo)
+
+⚡ Turbo models are **CFG-free** (`guidance_scale=0.0`) and use a maximum of 4 steps — ideal for quick drafts.
+
+| Alias      | Full Model ID              | VRAM  | Speed      |
+|------------|---------------------------|-------|------------|
+| `turbo`    | stabilityai/sd-turbo       | ~2GB  | ⚡ 1-3s    |
+| `turbo-xl` | stabilityai/sdxl-turbo     | ~6GB  | ⚡ 2-5s    |
+
+### Turbo Quality Presets
+| Preset | Resolution | Steps |
+|--------|------------|-------|
+| `low`  | 512×512    | 1     |
+| `mid`  | 512×512    | 2     |
+| `high` | 768×768    | 4     |
+
+> **Note:** Turbo models use `guidance_scale=0.0` automatically — no CFG needed. Max 4 steps.
+
+### Usage
+```bash
+/fantasia a quick sketch --model turbo --quality mid
+/fantasia a portrait --model turbo-xl --quality high
 ```
 
 ---

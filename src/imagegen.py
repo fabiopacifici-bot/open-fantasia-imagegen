@@ -22,12 +22,21 @@ QUALITY_PRESETS = {
     "high": (1024, 1024, 20),
 }
 
+# Turbo quality presets: CFG-free, 1-4 steps max
+TURBO_QUALITY_PRESETS = {
+    "low":  (512, 512, 1),
+    "mid":  (512, 512, 2),
+    "high": (768, 768, 4),
+}
+
 # Recommended model: BF16 schnell with torchao int8 quantization
 # Stays in VRAM, uses native CUDA int8 ops — ~3-5x faster than BF16
 DEFAULT_MODEL      = "black-forest-labs/FLUX.1-schnell"
 FULL_MODEL_KLEIN   = "black-forest-labs/FLUX.2-klein-base-9B"
 FULL_MODEL_SD15    = "stable-diffusion-v1-5/stable-diffusion-v1-5"
 Z_IMG_MODEL        = "Zhibei-ai/Z-Img"
+SD_TURBO_MODEL     = "stabilityai/sd-turbo"
+SDXL_TURBO_MODEL   = "stabilityai/sdxl-turbo"
 
 # GGUF fallback (slower on most GPUs due to CPU dequant, kept for low-VRAM setups)
 DEFAULT_GGUF_REPO  = "city96/FLUX.1-schnell-gguf"
@@ -50,17 +59,29 @@ def resolve_size(quality=None, width=None, height=None, steps=None):
     return width or 512, height or 512, steps or 4
 
 
+MODEL_ALIASES = {
+    "turbo":    "stabilityai/sd-turbo",
+    "turbo-xl": "stabilityai/sdxl-turbo",
+    "schnell":  "black-forest-labs/FLUX.1-schnell",
+    "klein":    "black-forest-labs/FLUX.2-klein-base-9B",
+    "sd15":     "stable-diffusion-v1-5/stable-diffusion-v1-5",
+    "z-img":    "Zhibei-ai/Z-Img",
+}
+
+
 def get_pipeline(model_id=None, quant="autoquant"):
     """Load image generation pipeline. Supports HF model IDs and GGUF paths/repos.
 
     Args:
-        model_id: HuggingFace model ID, GGUF path/repo, or None (uses DEFAULT_MODEL).
+        model_id: HuggingFace model ID, GGUF path/repo, alias, or None (uses DEFAULT_MODEL).
         quant: Quantization mode — "none", "autoquant" (default), or "int4".
     """
     hf_token = os.environ.get("HF_TOKEN")
 
     if model_id is None:
         model_id = DEFAULT_MODEL
+
+    model_id = MODEL_ALIASES.get(model_id, model_id)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     dtype  = torch.bfloat16 if device == "cuda" else torch.float32
@@ -119,6 +140,15 @@ def get_pipeline(model_id=None, quant="autoquant"):
         pipe = pipe.to(device)
         pipe = _apply_quant(pipe, quant, device)
 
+    elif "sd-turbo" in model_id.lower() or "sdxl-turbo" in model_id.lower():
+        # ── SD-Turbo / SDXL-Turbo: CFG-free, 1-4 steps ──
+        from diffusers import AutoPipelineForText2Image
+        print(f"Detected turbo model ({model_id}), loading with AutoPipelineForText2Image...")
+        pipe = AutoPipelineForText2Image.from_pretrained(
+            model_id, torch_dtype=torch.float16, variant="fp16"
+        )
+        pipe = pipe.to(device)
+
     else:
         pipe = StableDiffusionPipeline.from_pretrained(model_id, torch_dtype=dtype, token=token)
         pipe.safety_checker = None  # disable NSFW filter — local use only
@@ -172,7 +202,22 @@ def generate(prompt, output="output.png", model_id=None, enhance=True,
              quality=None, height=None, width=None, steps=None,
              guidance=7.5, seed=42, quant="autoquant"):
     """Generate an image from a text prompt."""
-    w, h, s = resolve_size(quality=quality, width=width, height=height, steps=steps)
+    # Resolve model alias early to detect turbo
+    resolved_model = MODEL_ALIASES.get(model_id, model_id) if model_id else None
+    is_turbo = resolved_model and ("sd-turbo" in resolved_model.lower() or "sdxl-turbo" in resolved_model.lower())
+
+    if is_turbo:
+        # Use turbo presets; resolve_size falls back to QUALITY_PRESETS so we handle it manually
+        preset_map = TURBO_QUALITY_PRESETS
+        q = (quality or "low").lower()
+        if q not in preset_map:
+            raise ValueError(f"Unknown quality '{q}'. Choose from: {', '.join(preset_map)}")
+        pw, ph, ps = preset_map[q]
+        w = width or pw
+        h = height or ph
+        s = steps if steps is not None else ps
+    else:
+        w, h, s = resolve_size(quality=quality, width=width, height=height, steps=steps)
 
     pipe, device = get_pipeline(model_id, quant=quant)
 
@@ -193,7 +238,9 @@ def generate(prompt, output="output.png", model_id=None, enhance=True,
         num_inference_steps=s,
         generator=generator,
     )
-    if not is_flux:
+    if is_turbo:
+        kwargs["guidance_scale"] = 0.0
+    elif not is_flux:
         kwargs["guidance_scale"] = guidance
 
     image = pipe(**kwargs).images[0]
