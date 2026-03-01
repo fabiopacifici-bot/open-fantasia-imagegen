@@ -11,7 +11,8 @@ POST /generate
     Returns: PNG image bytes
 
 GET /health
-    Returns: { "model": "...", "device": "cuda", "quant": "autoquant" }
+    Returns: { "active": "flux"|"qwen-vl"|"none", "flux_loaded": bool, "vl_loaded": bool,
+               "model": "...", "device": "cuda", "status": "ready" }
 
 POST /edit   [v2 stub — VL understanding only, pixel editing coming v2.1]
     { "image": "/path/to/image.png", "instruction": "make the sky purple" }
@@ -21,6 +22,7 @@ GET /edit/status
     Returns: { "loaded": bool, "model": "Qwen2.5-VL-7B-Instruct" }
 """
 
+import gc
 import io
 import os
 import logging
@@ -46,8 +48,8 @@ _model_id = None
 _quant_mode = "autoquant"
 
 # Qwen2.5-VL edit model — loaded lazily on first /edit call
-_edit_model = None
-_edit_processor = None
+_vl_model = None
+_vl_processor = None
 _EDIT_MODEL_ID = "Qwen/Qwen2.5-VL-7B-Instruct"
 
 
@@ -57,6 +59,32 @@ def load_model(model_id: str, quant: str = "autoquant"):
     _model_id = model_id
     _quant_mode = quant
     print(f"✅ Model ready: {_model_id} on {_device} (quant={_quant_mode})")
+
+
+def _unload_flux():
+    """Offload FLUX pipeline from GPU and free VRAM."""
+    global _pipe
+    if _pipe is not None:
+        logger.info("Swapping FLUX → Qwen2.5-VL for edit request")
+        _pipe.to("cpu")
+        del _pipe
+        _pipe = None
+        torch.cuda.empty_cache()
+        gc.collect()
+
+
+def _unload_vl():
+    """Offload Qwen2.5-VL from GPU and free VRAM."""
+    global _vl_model, _vl_processor
+    if _vl_model is not None:
+        logger.info("Swapping Qwen2.5-VL → FLUX for generate request")
+        _vl_model.to("cpu")
+        del _vl_model
+        del _vl_processor
+        _vl_model = None
+        _vl_processor = None
+        torch.cuda.empty_cache()
+        gc.collect()
 
 
 # ── Request schemas ───────────────────────────────────────────────────────────
@@ -83,15 +111,33 @@ class EditRequest(BaseModel):
 # ── Routes ────────────────────────────────────────────────────────────────────
 @app.get("/health")
 def health():
-    if _pipe is None:
-        raise HTTPException(status_code=503, detail="Model not loaded")
-    return {"model": _model_id, "device": _device, "status": "ready", "quant": _quant_mode}
+    active = "none"
+    if _pipe is not None:
+        active = "flux"
+    elif _vl_model is not None:
+        active = "qwen-vl"
+    return {
+        "active": active,
+        "flux_loaded": _pipe is not None,
+        "vl_loaded": _vl_model is not None,
+        "model": _model_id,
+        "device": _device or "cuda",
+        "status": "ready",
+    }
 
 
 @app.post("/generate")
 def generate(req: GenerateRequest):
+    global _pipe
+
+    # Swap out Qwen VL if loaded
+    _unload_vl()
+
+    # Load FLUX if not loaded
     if _pipe is None:
-        raise HTTPException(status_code=503, detail="Model not loaded")
+        if _model_id is None:
+            raise HTTPException(status_code=503, detail="Model not configured — restart server with --model")
+        load_model(_model_id, quant=_quant_mode)
 
     # If quant in request differs from loaded model, warn (can't hot-swap)
     if req.quant != _quant_mode:
@@ -149,7 +195,7 @@ def generate(req: GenerateRequest):
 # ── Edit endpoint (v2 stub — Qwen2.5-VL visual understanding) ─────────────────
 @app.get("/edit/status")
 def edit_status():
-    return {"loaded": _edit_model is not None, "model": _EDIT_MODEL_ID}
+    return {"loaded": _vl_model is not None, "model": _EDIT_MODEL_ID}
 
 
 @app.post("/edit")
@@ -159,25 +205,23 @@ async def edit_image(req: EditRequest):
     Returns a text description/analysis of the requested edit.
     NOTE: This is NOT pixel-level editing. Diffusion inpainting (true pixel editing) is planned for v2.1.
     """
-    global _edit_model, _edit_processor
+    global _vl_model, _vl_processor
 
     # Validate input image exists
     if not os.path.exists(req.image):
         raise HTTPException(status_code=400, detail=f"Image not found: {req.image}")
 
+    # Swap out FLUX before loading Qwen VL (16GB VRAM — can't coexist)
+    _unload_flux()
+
     # Lazy load Qwen2.5-VL
-    if _edit_model is None:
-        if _pipe is not None:
-            logger.warning(
-                "FLUX pipeline is loaded — attempting to load Qwen2.5-VL alongside it. "
-                "This may cause OOM on GPUs with < 24GB VRAM."
-            )
+    if _vl_model is None:
         logger.info(f"Loading {_EDIT_MODEL_ID} in 4-bit (bitsandbytes)...")
         try:
             from transformers import AutoModelForVision2Seq, AutoProcessor, BitsAndBytesConfig
             bnb_config = BitsAndBytesConfig(load_in_4bit=True)
-            _edit_processor = AutoProcessor.from_pretrained(_EDIT_MODEL_ID, trust_remote_code=True)
-            _edit_model = AutoModelForVision2Seq.from_pretrained(
+            _vl_processor = AutoProcessor.from_pretrained(_EDIT_MODEL_ID, trust_remote_code=True)
+            _vl_model = AutoModelForVision2Seq.from_pretrained(
                 _EDIT_MODEL_ID,
                 quantization_config=bnb_config,
                 trust_remote_code=True,
@@ -203,20 +247,20 @@ async def edit_image(req: EditRequest):
         ]
 
         # Apply Qwen2.5-VL chat template
-        text = _edit_processor.apply_chat_template(
+        text = _vl_processor.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
         )
-        inputs = _edit_processor(
+        inputs = _vl_processor(
             text=[text],
             images=[image],
             return_tensors="pt",
         )
         # Move inputs to model device
-        device = next(_edit_model.parameters()).device
+        device = next(_vl_model.parameters()).device
         inputs = {k: v.to(device) if hasattr(v, "to") else v for k, v in inputs.items()}
 
         with torch.no_grad():
-            output_ids = _edit_model.generate(
+            output_ids = _vl_model.generate(
                 **inputs,
                 max_new_tokens=req.max_new_tokens,
             )
@@ -224,7 +268,7 @@ async def edit_image(req: EditRequest):
         # Decode only new tokens
         input_len = inputs["input_ids"].shape[1]
         generated = output_ids[0][input_len:]
-        response_text = _edit_processor.decode(generated, skip_special_tokens=True)
+        response_text = _vl_processor.decode(generated, skip_special_tokens=True)
 
         return {
             "response": response_text,
