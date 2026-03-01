@@ -148,3 +148,14 @@ open-fantasia-imagegen/
 ## License
 
 MIT
+
+## Roadmap
+
+### v1.3 — Turbo mode
+- Add `sd-turbo` / `sdxl-turbo` as `--model turbo` option
+- Target: ~1-3s generation at 512×512
+
+### v2.0 — Image Editing
+- Instruction-based image editing via **Qwen2.5-VL**
+- New endpoint: `POST /edit` — `{ "image": "<path>", "instruction": "make the sky purple" }`
+- Slash command: `/fantasia edit <image> <instruction>`
