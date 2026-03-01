@@ -1,137 +1,133 @@
-# open-fantasia-imagegen
+# 🪄 Open Fantasia — Local Image Generation
 
-Local HuggingFace-powered image generation for OpenClaw. Supports FLUX.1 and Stable Diffusion models for high-quality text-to-image generation on your own hardware.
+Generate images locally on your GPU using FLUX.1-schnell or Stable Diffusion — no external API, no cost per image.
 
-## Quick Start (Slash Command)
+---
 
-Once the server is running, generate images directly from Telegram or webchat:
+## Gallery
 
-```
-/fantasia Generate an image of the man on the moon
-/fantasia a cat civilization in a fantasy city --quality high
-/fantasia cyberpunk street at night --quality low
-```
+| Prompt | Result |
+|--------|--------|
+| `a cat astronaut on the moon` | ![cat astronaut](assets/demo-cat-astronaut.png) |
+| `a samurai cat at sunset` | ![samurai cat](assets/demo-samurai-cat.png) |
+| `cyberpunk city at night` | ![cyberpunk city](assets/demo-cyberpunk-city.png) |
+| `a dragon breathing fire over a medieval castle` | ![dragon](assets/demo-dragon.png) |
 
-Supported quality flags: `--quality low | mid | high` (default: `mid`)
+*Generated locally with FLUX.1-schnell on RTX 4090 Mobile, low quality preset.*
+
+---
+
+## Features
+
+- 🚀 **Local generation** — no API keys, no cloud, no per-image cost
+- ⚡ **FLUX.1-schnell** — fast distilled model, great quality
+- 🌸 **FLUX.2-klein** — lighter experimental model
+- 🎨 **Stable Diffusion 1.5** — classic fallback, runs on 6GB VRAM
+- 🔢 **Batch generation** — generate 1–4 images per prompt (different seeds)
+- 💬 **OpenClaw slash command** — `/fantasia <prompt>` with inline buttons
+- 🔁 **Persistent server** — model stays in VRAM, near-instant after first load
 
 ---
 
 ## Requirements
 
-### Runtime
 - Python 3.10+
-- pip / virtualenv
-- CUDA GPU recommended (CPU fallback supported, but slow)
-
-### Dependencies
-Install via `pip install -r requirements.txt`:
-
-| Package         | Purpose                                       |
-|-----------------|-----------------------------------------------|
-| `diffusers`     | HuggingFace diffusion pipeline                |
-| `torch`         | Deep learning framework                       |
-| `transformers`  | Model tokenizers and components               |
-| `accelerate`    | GPU memory optimisation / CPU offload         |
-| `Pillow`        | Image saving                                  |
-| `numpy`         | Array operations                              |
-| `python-dotenv` | Loads `.env` credentials                      |
-| `fastapi`       | REST API server                               |
-| `uvicorn`       | ASGI server for FastAPI                       |
-
-### Environment Variables
-
-| Variable    | Description                                                              |
-|-------------|--------------------------------------------------------------------------|
-| `HF_TOKEN`  | HuggingFace token (required for gated models like FLUX.1)               |
+- CUDA GPU — **8GB VRAM minimum** (16GB recommended for FLUX)
+- [HuggingFace account](https://huggingface.co) + `HF_TOKEN` env var
+- ~16GB disk space for FLUX.1-schnell (downloaded once)
 
 ---
 
-## Setup
+## Quick Start
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env   # add your HF_TOKEN if needed
+git clone https://github.com/fabiopacifici-bot/open-fantasia-imagegen
+cd open-fantasia-imagegen
+bash setup.sh
 ```
+
+`setup.sh` will:
+1. Create a Python venv and install dependencies
+2. Download the recommended model (~16GB, one-time)
+3. Install and enable the systemd service
+4. Start the server at `http://localhost:8765`
 
 ---
 
-## Persistent Inference Server (Recommended)
+## Usage
 
-Start the server once — model loads into VRAM and stays there. Every subsequent request is near-instant.
+### Via OpenClaw slash command (recommended)
 
-```bash
-python src/server.py --model stable-diffusion-v1-5/stable-diffusion-v1-5
-# or with FLUX (requires HF_TOKEN and 8GB+ VRAM):
-python src/server.py --model black-forest-labs/FLUX.1-schnell
+```
+/fantasia a samurai cat at sunset
+/fantasia cyberpunk city --quality high
+/fantasia quick sketch --quality low --count 3
+/fantasia portrait --model klein
+/fantasia setup        ← first-time setup
 ```
 
-Server runs on `http://localhost:8765` by default.
+**Inline buttons:** Call `/fantasia` with no prompt to get model/quality/count selection buttons.
 
-### API
+### Direct API
 
-**Health check:**
 ```bash
-curl http://localhost:8765/health
-# {"model":"...","device":"cuda","status":"ready"}
-```
-
-**Generate image:**
-```bash
+# Generate an image
 curl -X POST http://localhost:8765/generate \
   -H "Content-Type: application/json" \
-  -d '{"prompt":"a dragon over a mountain lake","quality":"mid"}' \
-  -o image.png
+  -d '{"prompt": "a cat in space", "quality": "low", "enhance": true, "count": 1}'
+
+# Health check
+curl http://localhost:8765/health
 ```
 
-**Request body:**
+### CLI
 
-| Field      | Type    | Default | Description                          |
-|------------|---------|---------|--------------------------------------|
-| `prompt`   | string  | required| Text prompt                          |
-| `quality`  | string  | `mid`   | `low` / `mid` / `high`               |
-| `enhance`  | bool    | `true`  | Auto-enhance the prompt              |
-| `seed`     | int     | `42`    | Random seed                          |
-| `guidance` | float   | `7.5`   | Guidance scale (SD models only)      |
-| `width`    | int     | null    | Override width (ignores quality)     |
-| `height`   | int     | null    | Override height (ignores quality)    |
-| `steps`    | int     | null    | Override inference steps             |
+```bash
+.venv/bin/python src/imagegen.py \
+  --prompt "a samurai cat at sunset" \
+  --quality low \
+  --output output.png
+```
 
 ---
 
 ## Quality Presets
 
-| Preset | Resolution | Steps | Use case              |
-|--------|------------|-------|-----------------------|
-| `low`  | 256×256    | 4     | Quick drafts          |
-| `mid`  | 512×512    | 20    | Balanced (default)    |
-| `high` | 1024×1024  | 50    | Final quality         |
+| Preset | Resolution | Steps | Speed (RTX 4090 Mobile) |
+|--------|-----------|-------|--------------------------|
+| `low`  | 512×512   | 4     | ~2-3 min (BF16 FLUX)     |
+| `mid`  | 768×768   | 8     | ~5-8 min                 |
+| `high` | 1024×1024 | 20    | ~15-20 min               |
+
+> **Note:** Speed varies significantly by GPU. A quantized model (torchao / FP8) will be 3-5x faster — coming soon.
 
 ---
 
-## One-shot CLI (no server)
+## Models
+
+| Flag | Model | VRAM | Notes |
+|------|-------|------|-------|
+| `schnell` (default) | `black-forest-labs/FLUX.1-schnell` | ~16GB | Best quality |
+| `klein` | `black-forest-labs/FLUX.2-klein-base-9B` | ~16GB | Experimental |
+| `sd15` | `stable-diffusion-v1-5/stable-diffusion-v1-5` | ~4GB | Fast, classic |
+| Custom GGUF | `city96/FLUX.1-schnell-gguf/flux1-schnell-Q4_K_S.gguf` | ~8GB | Low-VRAM option |
+
+---
+
+## Server Management
 
 ```bash
-python src/imagegen.py --prompt "a red dragon flying over a mountain lake" --quality mid
-python src/imagegen.py --prompt "cyberpunk city" --quality high --output city.png
-python src/imagegen.py --prompt "simple cat sketch" --no-enhance --quality low
+# Start / stop / restart
+systemctl --user start fantasia.service
+systemctl --user stop fantasia.service
+systemctl --user restart fantasia.service
+
+# Status & logs
+systemctl --user status fantasia.service
+journalctl --user -u fantasia.service -f
 ```
 
-### CLI Options
-
-| Option        | Default         | Description                        |
-|---------------|-----------------|------------------------------------|
-| `--prompt`    | required        | Text prompt                        |
-| `--output`    | `output.png`    | Output image path                  |
-| `--model`     | auto            | HuggingFace model ID               |
-| `--quality`   | —               | `low` / `mid` / `high` preset      |
-| `--no-enhance`| off             | Skip automatic prompt enhancement  |
-| `--height`    | 512             | Image height in pixels             |
-| `--width`     | 512             | Image width in pixels              |
-| `--steps`     | 20              | Inference steps                    |
-| `--guidance`  | 7.5             | Guidance scale (SD only)           |
-| `--seed`      | 42              | Random seed                        |
+Output images are saved to `~/.openclaw/media/fantasia/`.
 
 ---
 
@@ -139,14 +135,17 @@ python src/imagegen.py --prompt "simple cat sketch" --no-enhance --quality low
 
 ```
 open-fantasia-imagegen/
-├── README.md
-├── requirements.txt
 ├── src/
-│   ├── imagegen.py       # Core generator + one-shot CLI
-│   └── server.py         # Persistent FastAPI inference server
-├── skill/
-│   └── SKILL.md          # OpenClaw skill integration docs
-├── tests/
-│   └── test_imagegen.py  # Unit tests
-└── flux/                 # FLUX reference submodule
+│   ├── server.py       # FastAPI inference server
+│   └── imagegen.py     # Pipeline loader + generation logic
+├── assets/             # README demo images
+├── setup.sh            # First-time setup script
+├── requirements.txt
+└── .specs/             # Plans, docs, debugging notes
 ```
+
+---
+
+## License
+
+MIT
