@@ -52,6 +52,7 @@ class GenerateRequest(BaseModel):
     guidance: float = 7.5
     seed: int = 42
     enhance: bool = True
+    count: int = Field(default=1, ge=1, le=4, description="Number of images to generate (1-4)")
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -78,9 +79,8 @@ def generate(req: GenerateRequest):
     if req.enhance:
         prompt = enhance_prompt(prompt)
 
-    print(f"Generating [{req.quality}] {w}x{h} @ {s} steps — \"{prompt}\"")
+    print(f"Generating [{req.quality}] {w}x{h} @ {s} steps x{req.count} — \"{prompt}\"")
 
-    generator = torch.Generator(device=_device).manual_seed(req.seed)
     is_flux = hasattr(_pipe, "transformer")
 
     kwargs = dict(
@@ -88,26 +88,30 @@ def generate(req: GenerateRequest):
         height=h,
         width=w,
         num_inference_steps=s,
-        generator=generator,
     )
     if not is_flux:
         kwargs["guidance_scale"] = req.guidance
-
-    image = _pipe(**kwargs).images[0]
-
-    # Store generated images under the outputs/ directory to separate from working space
-    out_dir = os.path.join(os.path.dirname(__file__), "../outputs")
+    out_dir = os.path.expanduser("~/.openclaw/media/fantasia")
     os.makedirs(out_dir, exist_ok=True)
     from PIL import Image
     import datetime
-    filename = f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-    path = os.path.join(out_dir, filename)
-    image.save(path)
 
+    paths = []
+    for i in range(req.count):
+        gen_i = torch.Generator(device=_device).manual_seed(req.seed + i)
+        kwargs["generator"] = gen_i
+        img = _pipe(**kwargs).images[0]
+        filename = f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{i}.png"
+        path = os.path.join(out_dir, filename)
+        img.save(path)
+        paths.append(path)
+
+    # Return last image as PNG (all are saved to disk)
     buf = io.BytesIO()
-    image.save(buf, format="PNG")
+    from PIL import Image as PILImage
+    PILImage.open(paths[-1]).save(buf, format="PNG")
     buf.seek(0)
-    return Response(content=buf.read(), media_type="image/png")
+    return Response(content=buf.read(), media_type="image/png", headers={"X-Saved-Paths": ",".join(paths)})
 
 
 # ── Entrypoint ────────────────────────────────────────────────────────────────

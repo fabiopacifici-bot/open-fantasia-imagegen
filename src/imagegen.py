@@ -7,7 +7,7 @@ try:
 except ImportError:
     pass
 
-from diffusers import FluxPipeline, StableDiffusionPipeline
+from diffusers import FluxPipeline, StableDiffusionPipeline, Flux2KleinPipeline
 
 # Quality presets: (width, height, steps)
 QUALITY_PRESETS = {
@@ -43,7 +43,9 @@ def get_pipeline(model_id=None):
     token = hf_token or True
 
     print(f"Loading model: {model_id} on {device}")
-    if "FLUX" in model_id or "flux" in model_id:
+    if "klein" in model_id.lower():
+        pipe = Flux2KleinPipeline.from_pretrained(model_id, torch_dtype=dtype, token=token)
+    elif "FLUX" in model_id or "flux" in model_id:
         pipe = FluxPipeline.from_pretrained(model_id, torch_dtype=dtype, token=token)
     else:
         pipe = StableDiffusionPipeline.from_pretrained(model_id, torch_dtype=dtype, token=token)
@@ -79,7 +81,7 @@ def generate(prompt, output="output.png", model_id=None, enhance=True,
     print(f"Generating {w}x{h} at {s} steps...")
     generator = torch.Generator(device=device).manual_seed(seed)
 
-    is_flux = hasattr(pipe, 'transformer')
+    is_flux = hasattr(pipe, "transformer")
     kwargs = dict(
         prompt=prompt,
         height=h,
