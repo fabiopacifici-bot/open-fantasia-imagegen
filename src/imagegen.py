@@ -16,22 +16,21 @@ from diffusers import (
 )
 
 # Quality presets: (width, height, steps)
-# GGUF models are faster — fewer steps needed for good results
 QUALITY_PRESETS = {
     "low":  (512,  512,  4),
     "mid":  (768,  768,  8),
     "high": (1024, 1024, 20),
 }
 
-# Default recommended model — GGUF Q4_K_S fits in 8GB VRAM, fast on 16GB
-DEFAULT_GGUF_REPO   = "city96/FLUX.1-schnell-gguf"
-DEFAULT_GGUF_FILE   = "flux1-schnell-Q4_K_S.gguf"
-DEFAULT_GGUF_MODEL  = f"{DEFAULT_GGUF_REPO}/{DEFAULT_GGUF_FILE}"
-
-# Full model fallbacks (slow on 16GB, kept for compatibility)
-FULL_MODEL_SCHNELL = "black-forest-labs/FLUX.1-schnell"
+# Recommended model: BF16 schnell with torchao int8 quantization
+# Stays in VRAM, uses native CUDA int8 ops — ~3-5x faster than BF16
+DEFAULT_MODEL      = "black-forest-labs/FLUX.1-schnell"
 FULL_MODEL_KLEIN   = "black-forest-labs/FLUX.2-klein-base-9B"
 FULL_MODEL_SD15    = "stable-diffusion-v1-5/stable-diffusion-v1-5"
+
+# GGUF fallback (slower on most GPUs due to CPU dequant, kept for low-VRAM setups)
+DEFAULT_GGUF_REPO  = "city96/FLUX.1-schnell-gguf"
+DEFAULT_GGUF_FILE  = "flux1-schnell-Q4_K_S.gguf"
 
 
 def is_gguf(model_id: str) -> bool:
@@ -55,8 +54,7 @@ def get_pipeline(model_id=None):
     hf_token = os.environ.get("HF_TOKEN")
 
     if model_id is None:
-        # Default: GGUF quantized schnell (fast + fits in VRAM)
-        model_id = DEFAULT_GGUF_MODEL
+        model_id = DEFAULT_MODEL
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     dtype  = torch.bfloat16 if device == "cuda" else torch.float32
@@ -65,12 +63,8 @@ def get_pipeline(model_id=None):
     print(f"Loading model: {model_id} on {device}")
 
     if is_gguf(model_id):
-        # ── GGUF path: load transformer with quantization config, build pipeline ──
-        # model_id can be:
-        #   "city96/FLUX.1-schnell-gguf/flux1-schnell-Q4_K_S.gguf"  (HF repo/file)
-        #   "/path/to/local/model.gguf"                               (local file)
+        # ── GGUF path: slower on most GPUs (CPU dequant), kept for low-VRAM setups ──
         if "/" in model_id and not os.path.exists(model_id):
-            # HF repo format: "owner/repo/filename.gguf"
             parts    = model_id.split("/")
             repo_id  = "/".join(parts[:2])
             filename = "/".join(parts[2:])
@@ -94,9 +88,8 @@ def get_pipeline(model_id=None):
                 torch_dtype=dtype,
             )
 
-        # Build pipeline around the quantized transformer
         pipe = FluxPipeline.from_pretrained(
-            FULL_MODEL_SCHNELL,
+            DEFAULT_MODEL,
             transformer=transformer,
             torch_dtype=dtype,
             token=token,
@@ -108,8 +101,17 @@ def get_pipeline(model_id=None):
         pipe = pipe.to(device)
 
     elif "FLUX" in model_id or "flux" in model_id:
-        pipe = FluxPipeline.from_pretrained(model_id, torch_dtype=dtype, token=token)
-        pipe = pipe.to(device)
+        # ── FLUX BF16 + torchao int8 quantization — native CUDA, fast ──
+        try:
+            from torchao.quantization import autoquant
+            pipe = FluxPipeline.from_pretrained(model_id, torch_dtype=dtype, token=token)
+            pipe = pipe.to(device)
+            pipe.transformer = autoquant(pipe.transformer, error_on_unseen=False)
+            print("torchao autoquant applied to transformer ✅")
+        except Exception as e:
+            print(f"torchao unavailable ({e}), falling back to BF16")
+            pipe = FluxPipeline.from_pretrained(model_id, torch_dtype=dtype, token=token)
+            pipe = pipe.to(device)
 
     else:
         pipe = StableDiffusionPipeline.from_pretrained(model_id, torch_dtype=dtype, token=token)
