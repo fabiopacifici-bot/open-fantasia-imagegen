@@ -19,6 +19,7 @@ output/
 # Flux submodule build artifacts
 flux/src/*.egg-info/
 flux/output/
+output/
 
 # Editor
 .idea/

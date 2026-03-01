@@ -47,6 +47,7 @@ def get_pipeline(model_id=None):
         pipe = FluxPipeline.from_pretrained(model_id, torch_dtype=dtype, token=token)
     else:
         pipe = StableDiffusionPipeline.from_pretrained(model_id, torch_dtype=dtype, token=token)
+        pipe.safety_checker = None  # disable NSFW filter — local use only
 
     pipe = pipe.to(device)
     return pipe, device
