@@ -11,7 +11,7 @@ from diffusers import FluxPipeline, StableDiffusionPipeline
 
 # Quality presets: (width, height, steps)
 QUALITY_PRESETS = {
-    "low":  (256,  256,  4),
+    "low":  (256,  256,  8),   # min 8 steps for FLUX scheduler stability
     "mid":  (512,  512,  20),
     "high": (1024, 1024, 50),
 }
