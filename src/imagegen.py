@@ -7,14 +7,36 @@ try:
 except ImportError:
     pass
 
-from diffusers import FluxPipeline, StableDiffusionPipeline, Flux2KleinPipeline
+from diffusers import (
+    FluxPipeline,
+    FluxTransformer2DModel,
+    StableDiffusionPipeline,
+    Flux2KleinPipeline,
+    GGUFQuantizationConfig,
+)
 
 # Quality presets: (width, height, steps)
+# GGUF models are faster — fewer steps needed for good results
 QUALITY_PRESETS = {
-    "low":  (256,  256,  8),   # min 8 steps for FLUX scheduler stability
-    "mid":  (512,  512,  20),
-    "high": (1024, 1024, 50),
+    "low":  (512,  512,  4),
+    "mid":  (768,  768,  8),
+    "high": (1024, 1024, 20),
 }
+
+# Default recommended model — GGUF Q4_K_S fits in 8GB VRAM, fast on 16GB
+DEFAULT_GGUF_REPO   = "city96/FLUX.1-schnell-gguf"
+DEFAULT_GGUF_FILE   = "flux1-schnell-Q4_K_S.gguf"
+DEFAULT_GGUF_MODEL  = f"{DEFAULT_GGUF_REPO}/{DEFAULT_GGUF_FILE}"
+
+# Full model fallbacks (slow on 16GB, kept for compatibility)
+FULL_MODEL_SCHNELL = "black-forest-labs/FLUX.1-schnell"
+FULL_MODEL_KLEIN   = "black-forest-labs/FLUX.2-klein-base-9B"
+FULL_MODEL_SD15    = "stable-diffusion-v1-5/stable-diffusion-v1-5"
+
+
+def is_gguf(model_id: str) -> bool:
+    """Return True if the model identifier points to a GGUF file."""
+    return model_id.endswith(".gguf") or ".gguf" in model_id
 
 
 def resolve_size(quality=None, width=None, height=None, steps=None):
@@ -25,33 +47,75 @@ def resolve_size(quality=None, width=None, height=None, steps=None):
             raise ValueError(f"Unknown quality '{q}'. Choose from: {', '.join(QUALITY_PRESETS)}")
         w, h, s = QUALITY_PRESETS[q]
         return w, h, steps if steps is not None else s
-    return width or 512, height or 512, steps or 20
+    return width or 512, height or 512, steps or 4
 
 
 def get_pipeline(model_id=None):
-    """Load image generation pipeline."""
+    """Load image generation pipeline. Supports HF model IDs and GGUF paths/repos."""
     hf_token = os.environ.get("HF_TOKEN")
+
     if model_id is None:
-        model_id = (
-            "black-forest-labs/FLUX.1-schnell" if hf_token
-            else "stable-diffusion-v1-5/stable-diffusion-v1-5"
-        )
+        # Default: GGUF quantized schnell (fast + fits in VRAM)
+        model_id = DEFAULT_GGUF_MODEL
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    dtype = torch.bfloat16 if device == "cuda" else torch.float32
-
-    token = hf_token or True
+    dtype  = torch.bfloat16 if device == "cuda" else torch.float32
+    token  = hf_token or True
 
     print(f"Loading model: {model_id} on {device}")
-    if "klein" in model_id.lower():
+
+    if is_gguf(model_id):
+        # ── GGUF path: load transformer with quantization config, build pipeline ──
+        # model_id can be:
+        #   "city96/FLUX.1-schnell-gguf/flux1-schnell-Q4_K_S.gguf"  (HF repo/file)
+        #   "/path/to/local/model.gguf"                               (local file)
+        if "/" in model_id and not os.path.exists(model_id):
+            # HF repo format: "owner/repo/filename.gguf"
+            parts    = model_id.split("/")
+            repo_id  = "/".join(parts[:2])
+            filename = "/".join(parts[2:])
+        else:
+            repo_id  = None
+            filename = model_id
+
+        quant_config = GGUFQuantizationConfig(compute_dtype=dtype)
+
+        if repo_id:
+            transformer = FluxTransformer2DModel.from_single_file(
+                f"https://huggingface.co/{repo_id}/blob/main/{filename}",
+                quantization_config=quant_config,
+                torch_dtype=dtype,
+                token=token,
+            )
+        else:
+            transformer = FluxTransformer2DModel.from_single_file(
+                filename,
+                quantization_config=quant_config,
+                torch_dtype=dtype,
+            )
+
+        # Build pipeline around the quantized transformer
+        pipe = FluxPipeline.from_pretrained(
+            FULL_MODEL_SCHNELL,
+            transformer=transformer,
+            torch_dtype=dtype,
+            token=token,
+        )
+        pipe = pipe.to(device)
+
+    elif "klein" in model_id.lower():
         pipe = Flux2KleinPipeline.from_pretrained(model_id, torch_dtype=dtype, token=token)
+        pipe = pipe.to(device)
+
     elif "FLUX" in model_id or "flux" in model_id:
         pipe = FluxPipeline.from_pretrained(model_id, torch_dtype=dtype, token=token)
+        pipe = pipe.to(device)
+
     else:
         pipe = StableDiffusionPipeline.from_pretrained(model_id, torch_dtype=dtype, token=token)
         pipe.safety_checker = None  # disable NSFW filter — local use only
+        pipe = pipe.to(device)
 
-    pipe = pipe.to(device)
     return pipe, device
 
 
@@ -104,13 +168,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Open Fantasia — local image generator.")
     parser.add_argument("--prompt", type=str, required=True, help="Text prompt.")
     parser.add_argument("--output", type=str, default="output.png", help="Output file path.")
-    parser.add_argument("--model", type=str, default=None, help="HuggingFace model ID.")
+    parser.add_argument("--model", type=str, default=None,
+                        help="Model ID or GGUF path. Default: city96/FLUX.1-schnell-gguf/flux1-schnell-Q4_K_S.gguf")
     parser.add_argument("--no-enhance", action="store_true", help="Skip prompt enhancement.")
     parser.add_argument("--quality", type=str, choices=["low", "mid", "high"],
-                        help="Quality preset: low (256px/4 steps), mid (512px/20 steps), high (1024px/50 steps).")
-    parser.add_argument("--width", type=int, default=None, help="Override width (ignored if --quality set).")
-    parser.add_argument("--height", type=int, default=None, help="Override height (ignored if --quality set).")
-    parser.add_argument("--steps", type=int, default=None, help="Override inference steps.")
+                        help="Quality preset: low (512px/4 steps), mid (768px/8 steps), high (1024px/20 steps).")
+    parser.add_argument("--width", type=int, default=None)
+    parser.add_argument("--height", type=int, default=None)
+    parser.add_argument("--steps", type=int, default=None)
     parser.add_argument("--guidance", type=float, default=7.5)
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
