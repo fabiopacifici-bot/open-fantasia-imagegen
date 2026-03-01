@@ -8,3 +8,6 @@ accelerate
 sentencepiece
 fastapi
 uvicorn
+torchao
+bitsandbytes
+huggingface_hub

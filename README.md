@@ -93,13 +93,13 @@ curl http://localhost:8765/health
 
 ## Quality Presets
 
-| Preset | Resolution | Steps | Speed (RTX 4090 Mobile) |
-|--------|-----------|-------|--------------------------|
-| `low`  | 512×512   | 4     | ~2-3 min (BF16 FLUX)     |
-| `mid`  | 768×768   | 8     | ~5-8 min                 |
-| `high` | 1024×1024 | 20    | ~15-20 min               |
+| Preset | Resolution | Steps | Speed (RTX 4090) |
+|--------|-----------|-------|-------------------|
+| `low`  | 512×512   | 4     | ~2-3 min          |
+| `mid`  | 768×768   | 8     | ~5-8 min          |
+| `high` | 1024×1024 | 20    | ~13+ min          |
 
-> **Note:** Speed varies significantly by GPU. A quantized model (torchao / FP8) will be 3-5x faster — coming soon.
+> **Note:** Speed varies significantly by GPU. Use torchao autoquant (enabled by default) to reduce VRAM usage and improve throughput.
 
 ---
 
@@ -107,10 +107,9 @@ curl http://localhost:8765/health
 
 | Flag | Model | VRAM | Notes |
 |------|-------|------|-------|
-| `schnell` (default) | `black-forest-labs/FLUX.1-schnell` | ~16GB | Best quality |
+| `schnell` (default) | `black-forest-labs/FLUX.1-schnell` | ~16GB | Best quality, torchao autoquant by default |
 | `klein` | `black-forest-labs/FLUX.2-klein-base-9B` | ~16GB | Experimental |
 | `sd15` | `stable-diffusion-v1-5/stable-diffusion-v1-5` | ~4GB | Fast, classic |
-| Custom GGUF | `city96/FLUX.1-schnell-gguf/flux1-schnell-Q4_K_S.gguf` | ~8GB | Low-VRAM option |
 
 ---
 

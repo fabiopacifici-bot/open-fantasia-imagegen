@@ -10,16 +10,18 @@ venv/
 *.egg-info/
 
 # Model outputs & generated images
+outputs/
 output/
 *.png
 *.jpg
 *.jpeg
 *.webp
 
-# Flux submodule build artifacts
-flux/src/*.egg-info/
-flux/output/
-output/
+# GGUF model files
+*.gguf
+
+# Flux submodule
+flux/
 
 # Editor
 .idea/

@@ -1,0 +1,3 @@
+name: open-fantasia-imagegen
+description: Local image generation with FLUX or Stable Diffusion. Generate images from text prompts on your GPU.
+version: 1.2.0
