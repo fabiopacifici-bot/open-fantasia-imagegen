@@ -107,6 +107,16 @@ class EditRequest(BaseModel):
     instruction: str = Field(description="Edit instruction, e.g. 'make the sky purple'")
     max_new_tokens: int = 512
 
+    @property
+    def safe_image_path(self) -> str:
+        """Resolve and validate image path is within allowed directory."""
+        import os
+        allowed_dir = os.path.realpath(os.path.expanduser("~/.openclaw/media/fantasia"))
+        resolved = os.path.realpath(os.path.expanduser(self.image))
+        if not resolved.startswith(allowed_dir + os.sep) and resolved != allowed_dir:
+            raise ValueError(f"Image path not allowed: must be within {allowed_dir}")
+        return resolved
+
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 @app.get("/health")
@@ -207,9 +217,14 @@ async def edit_image(req: EditRequest):
     """
     global _vl_model, _vl_processor
 
-    # Validate input image exists
-    if not os.path.exists(req.image):
-        raise HTTPException(status_code=400, detail=f"Image not found: {req.image}")
+    # Validate input image exists and is within allowed directory
+    try:
+        safe_path = req.safe_image_path
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if not os.path.exists(safe_path):
+        raise HTTPException(status_code=400, detail=f"Image not found: {safe_path}")
 
     # Swap out FLUX before loading Qwen VL (16GB VRAM — can't coexist)
     _unload_flux()
@@ -234,7 +249,7 @@ async def edit_image(req: EditRequest):
     # Build chat message with image + instruction
     try:
         from PIL import Image as PILImage
-        image = PILImage.open(req.image).convert("RGB")
+        image = PILImage.open(safe_path).convert("RGB")
 
         messages = [
             {
@@ -292,7 +307,7 @@ if __name__ == "__main__":
         default="stable-diffusion-v1-5/stable-diffusion-v1-5",
         help="HuggingFace model ID to load",
     )
-    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument(
         "--quant",
