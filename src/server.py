@@ -27,6 +27,7 @@ import io
 import os
 import logging
 import argparse
+import threading
 
 import torch
 import uvicorn
@@ -45,7 +46,10 @@ app = FastAPI(title="Open Fantasia", version="2.0")
 _pipe = None
 _device = None
 _model_id = None
-_quant_mode = "autoquant"
+_quant_mode = "none"
+
+# Generation lock — prevents concurrent requests from stacking (returns 503 if busy)
+_generate_lock = threading.Lock()
 
 # Qwen2.5-VL edit model — loaded lazily on first /edit call
 _vl_model = None
@@ -53,12 +57,31 @@ _vl_processor = None
 _EDIT_MODEL_ID = "Qwen/Qwen2.5-VL-7B-Instruct"
 
 
-def load_model(model_id: str, quant: str = "autoquant"):
+def load_model(model_id: str, quant: str = "none"):
     global _pipe, _device, _model_id, _quant_mode
     _pipe, _device = get_pipeline(model_id, quant=quant)
     _model_id = model_id
     _quant_mode = quant
     print(f"✅ Model ready: {_model_id} on {_device} (quant={_quant_mode})")
+
+
+def warmup_model():
+    """Run a single low-res warmup inference to compile CUDA kernels at startup."""
+    global _pipe, _device
+    if _pipe is None or _device != "cuda":
+        return
+    print("🔥 Warming up CUDA kernels (1 step, 256x256)...")
+    try:
+        with torch.no_grad():
+            gen = torch.Generator(device=_device).manual_seed(0)
+            is_flux = hasattr(_pipe, "transformer")
+            kwargs = dict(prompt="warmup", height=256, width=256, num_inference_steps=1, generator=gen)
+            if not is_flux:
+                kwargs["guidance_scale"] = 1.0
+            _pipe(**kwargs)
+        print("✅ Warmup complete — inference ready")
+    except Exception as e:
+        print(f"⚠️  Warmup failed (non-fatal): {e}")
 
 
 def _unload_flux():
@@ -126,18 +149,36 @@ def health():
         active = "flux"
     elif _vl_model is not None:
         active = "qwen-vl"
+    busy = not _generate_lock.acquire(blocking=False)
+    if not busy:
+        _generate_lock.release()
     return {
         "active": active,
         "flux_loaded": _pipe is not None,
         "vl_loaded": _vl_model is not None,
         "model": _model_id,
         "device": _device or "cuda",
-        "status": "ready",
+        "status": "busy" if busy else "ready",
+        "quant": _quant_mode,
     }
 
 
 @app.post("/generate")
 def generate(req: GenerateRequest):
+    global _pipe
+
+    # Return 503 immediately if another generation is in progress
+    acquired = _generate_lock.acquire(blocking=False)
+    if not acquired:
+        raise HTTPException(status_code=503, detail="Server busy — another generation is in progress. Try again shortly.")
+
+    try:
+        return _do_generate(req)
+    finally:
+        _generate_lock.release()
+
+
+def _do_generate(req: GenerateRequest):
     global _pipe
 
     # Swap out Qwen VL if loaded
@@ -311,11 +352,12 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument(
         "--quant",
-        default="autoquant",
+        default="none",
         choices=["none", "autoquant", "int4"],
-        help="Quantization mode for the generation model (default: autoquant)",
+        help="Quantization mode for the generation model (default: none — BF16, fastest cold-start)",
     )
     args = parser.parse_args()
 
     load_model(args.model, quant=args.quant)
+    warmup_model()
     uvicorn.run(app, host=args.host, port=args.port)
