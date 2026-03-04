@@ -13,7 +13,7 @@ metadata:
 ## Description
 Generate images locally on GPU using the persistent Open Fantasia inference server.
 Model stays loaded in VRAM — near-instant generation after first startup.
-Default model: **FLUX.1-schnell Q4_K_S GGUF** (~6.6GB, fast on 8GB+ VRAM).
+Default model: **FLUX.1-schnell BF16** (~6.6GB, fast on 8GB+ VRAM).
 
 ## First-Time Setup
 ```bash
