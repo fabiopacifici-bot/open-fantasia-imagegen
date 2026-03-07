@@ -127,16 +127,16 @@ def _unload_edit():
 
 
 def _load_edit():
-    """Lazy-load QwenImageEditPlusPipeline (downloads to HF_HOME cache on first run)."""
+    """Lazy-load QwenImageEditPlusPipeline with CPU offload (20B model, 16GB VRAM)."""
     global _edit_pipe
     from diffusers import QwenImageEditPlusPipeline
-    logger.info(f"Loading {_EDIT_PIPE_MODEL_ID} …")
+    logger.info(f"Loading {_EDIT_PIPE_MODEL_ID} with CPU offload …")
     _edit_pipe = QwenImageEditPlusPipeline.from_pretrained(
         _EDIT_PIPE_MODEL_ID,
         torch_dtype=torch.bfloat16,
     )
-    _edit_pipe.to("cuda")
-    logger.info("✅ Qwen Image Edit pipeline ready")
+    _edit_pipe.enable_model_cpu_offload()
+    logger.info("✅ Qwen Image Edit pipeline ready (CPU offload enabled)")
 
 
 # ── Request schemas ───────────────────────────────────────────────────────────
