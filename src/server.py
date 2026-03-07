@@ -57,6 +57,10 @@ _vl_model = None
 _vl_processor = None
 _EDIT_MODEL_ID = "Qwen/Qwen2.5-VL-7B-Instruct"
 
+# Qwen Image Edit pipeline — loaded lazily on first /edit call
+_edit_pipe = None
+_EDIT_PIPE_MODEL_ID = "Qwen/Qwen-Image-Edit-2511"
+
 
 def load_model(model_id: str, quant: str = "none"):
     global _pipe, _device, _model_id, _quant_mode
@@ -109,6 +113,30 @@ def _unload_vl():
         torch.cuda.empty_cache()
         gc.collect()
 
+
+def _unload_edit():
+    """Offload Qwen Image Edit pipeline from GPU and free VRAM."""
+    global _edit_pipe
+    if _edit_pipe is not None:
+        logger.info("Unloading Qwen Image Edit pipeline")
+        _edit_pipe.to("cpu")
+        del _edit_pipe
+        _edit_pipe = None
+        torch.cuda.empty_cache()
+        gc.collect()
+
+
+def _load_edit():
+    """Lazy-load QwenImageEditPlusPipeline (downloads to HF_HOME cache on first run)."""
+    global _edit_pipe
+    from diffusers import QwenImageEditPlusPipeline
+    logger.info(f"Loading {_EDIT_PIPE_MODEL_ID} …")
+    _edit_pipe = QwenImageEditPlusPipeline.from_pretrained(
+        _EDIT_PIPE_MODEL_ID,
+        torch_dtype=torch.bfloat16,
+    )
+    _edit_pipe.to("cuda")
+    logger.info("✅ Qwen Image Edit pipeline ready")
 
 
 # ── Request schemas ───────────────────────────────────────────────────────────
@@ -205,3 +233,91 @@ def _do_generate(req: GenerateRequest):
     buf.seek(0)
     return Response(content=buf.read(), media_type="image/png", headers={"X-Saved-Paths": ",".join(paths)})
 
+
+
+# ── Edit endpoint — Qwen Image Edit 2511 ─────────────────────────────────────
+class EditRequest(BaseModel):
+    image: str = Field(description="Absolute path to input image")
+    prompt: str = Field(description="Edit instruction")
+    negative_prompt: str = Field(default=" ", description="Negative prompt")
+    steps: int = Field(default=40, ge=1, le=80)
+    true_cfg_scale: float = Field(default=4.0, ge=0.5, le=10.0)
+    guidance_scale: float = Field(default=1.0, ge=0.0, le=5.0)
+    seed: int = Field(default=0)
+    count: int = Field(default=1, ge=1, le=4)
+
+    @property
+    def safe_image_path(self) -> str:
+        allowed = [
+            os.path.expanduser("~/.openclaw/media/fantasia"),
+            os.path.expanduser("~/.openclaw/media/inbound"),
+        ]
+        abs_path = os.path.realpath(self.image)
+        if not any(abs_path.startswith(d) for d in allowed):
+            raise ValueError(f"Image path not in allowed dirs: {abs_path}")
+        return abs_path
+
+
+@app.post("/edit")
+async def edit_image(req: EditRequest):
+    """
+    Context-aware image editing via Qwen-Image-Edit-2511 (QwenImageEditPlusPipeline).
+    Supports multi-image input, instruction-following, identity-preserving edits.
+    """
+    global _edit_pipe
+
+    try:
+        safe_path = req.safe_image_path
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if not os.path.exists(safe_path):
+        raise HTTPException(status_code=400, detail=f"Image not found: {safe_path}")
+
+    # Swap out other models to free VRAM
+    _unload_flux()
+    _unload_vl()
+
+    if _edit_pipe is None:
+        _load_edit()
+
+    try:
+        from PIL import Image as PILImage
+        import datetime
+
+        pil_image = PILImage.open(safe_path).convert("RGB")
+
+        out_dir = os.path.expanduser("~/.openclaw/media/fantasia")
+        os.makedirs(out_dir, exist_ok=True)
+        paths = []
+
+        with torch.inference_mode():
+            result = _edit_pipe(
+                image=[pil_image],
+                prompt=req.prompt,
+                negative_prompt=req.negative_prompt,
+                num_inference_steps=req.steps,
+                true_cfg_scale=req.true_cfg_scale,
+                guidance_scale=req.guidance_scale,
+                generator=torch.manual_seed(req.seed),
+                num_images_per_prompt=req.count,
+            )
+
+        for i, img in enumerate(result.images):
+            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            path = os.path.join(out_dir, f"{ts}_{i}_edit.png")
+            img.save(path)
+            paths.append(path)
+
+        buf = io.BytesIO()
+        result.images[0].save(buf, format="PNG")
+        buf.seek(0)
+        return Response(
+            content=buf.read(),
+            media_type="image/png",
+            headers={"X-Saved-Paths": ",".join(paths)},
+        )
+
+    except Exception as e:
+        logger.exception("Edit inference failed")
+        raise HTTPException(status_code=500, detail=f"Edit inference failed: {e}")
