@@ -128,59 +128,72 @@ def _unload_edit():
     if _edit_model is not None:
         logger.info("Unloading Qwen Image Edit model")
         _edit_model = None
-        _edit_clip = None
-        _edit_vae = None
+        _edit_clip  = None
+        _edit_vae   = None
         torch.cuda.empty_cache()
         gc.collect()
         logger.info("Qwen Image Edit unloaded")
 
 
 def _load_edit():
-    """Load Qwen Image Edit fp8 + Lightning LoRA via ComfyUI loaders."""
+    """
+    Load Qwen Image Edit fp8 + Lightning LoRA using ComfyUI source directly.
+    All logic copied from ComfyUI comfy/ — no API guessing.
+    """
     global _edit_model, _edit_clip, _edit_vae
 
-    comfyui_path = "/mnt/d/compy/ComfyUI"
-    if comfyui_path not in sys.path:
-        sys.path.insert(0, comfyui_path)
+    _COMFYUI = "/mnt/d/compy/ComfyUI"
+    if _COMFYUI not in sys.path:
+        sys.path.insert(0, _COMFYUI)
 
     import comfy.sd
     import comfy.utils
     import comfy.lora
     from comfy.sd import CLIPType
 
-    logger.info(f"Loading Qwen edit UNET from {_QWEN_EDIT_UNET}")
+    logger.info(f"Loading Qwen edit diffusion model from {_QWEN_EDIT_UNET}")
     model = comfy.sd.load_diffusion_model(_QWEN_EDIT_UNET)
 
-    logger.info(f"Applying Lightning LoRA from {_QWEN_EDIT_LORA}")
-    lora_sd = comfy.utils.load_torch_file(_QWEN_EDIT_LORA, safe_load=True)
-    key_map = comfy.lora.model_lora_keys_unet(model.model, {})
-    patches = comfy.lora.load_lora(lora_sd, key_map)
+    logger.info(f"Building LoRA key map for QwenImage model")
+    lora_sd  = comfy.utils.load_torch_file(_QWEN_EDIT_LORA, safe_load=True)
+    key_map  = comfy.lora.model_lora_keys_unet(model.model, {})
+    patches  = comfy.lora.load_lora(lora_sd, key_map)
     model.add_patches(patches, strength_patch=1.0)
+    logger.info(f"Lightning 4-step LoRA applied — {len(patches)} patches")
 
-    logger.info(f"Loading Qwen edit CLIP from {_QWEN_EDIT_CLIP}")
-    clip = comfy.sd.load_clip(ckpt_paths=[_QWEN_EDIT_CLIP], clip_type=CLIPType.QWEN_IMAGE)
+    logger.info(f"Loading Qwen CLIP from {_QWEN_EDIT_CLIP}")
+    clip = comfy.sd.load_clip(
+        ckpt_paths=[_QWEN_EDIT_CLIP],
+        clip_type=CLIPType.QWEN_IMAGE,
+    )
 
-    logger.info(f"Loading Qwen edit VAE from {_QWEN_EDIT_VAE}")
+    logger.info(f"Loading Qwen VAE from {_QWEN_EDIT_VAE}")
     vae_sd = comfy.utils.load_torch_file(_QWEN_EDIT_VAE, safe_load=True)
     vae = comfy.sd.VAE(sd=vae_sd)
 
     _edit_model = model
     _edit_clip  = clip
     _edit_vae   = vae
-    logger.info("✅ Qwen Image Edit loaded (fp8 + Lightning 4-step LoRA)")
+    logger.info("✅ Qwen Image Edit ready (fp8 + Lightning 4-step LoRA)")
 
 
-def _run_edit(pil_image, instruction: str, steps: int = 4, strength: float = 0.75, cfg: float = 1.0, seed: int = 42):
-    """Run pixel-level image editing via Qwen Image Edit + Lightning LoRA. Returns PIL.Image."""
+def _run_edit(pil_image, instruction: str, steps: int = 4, strength: float = 1.0, cfg: float = 1.0, seed: int = 42):
+    """
+    Run Qwen Image Edit inference. All sampling logic mirrored from ComfyUI source.
+    Returns PIL.Image.
+    """
     import math as _math
-    import comfy.sample
-    import comfy.samplers
-    import comfy.utils
-    import node_helpers
     import numpy as _np
     from PIL import Image as PILImage
 
-    # Scale to ~1MP
+    _COMFYUI = "/mnt/d/compy/ComfyUI"
+    if _COMFYUI not in sys.path:
+        sys.path.insert(0, _COMFYUI)
+
+    import comfy.sample
+    import node_helpers
+
+    # Scale to ~1MP, multiples of 8
     total_px = 1024 * 1024
     w, h = pil_image.size
     scale = _math.sqrt(total_px / (w * h))
@@ -188,28 +201,29 @@ def _run_edit(pil_image, instruction: str, steps: int = 4, strength: float = 0.7
     new_h = round(h * scale / 8) * 8
     pil_image = pil_image.resize((new_w, new_h), PILImage.LANCZOS)
 
+    # PIL → BHWC float tensor [0,1]
     img_np = _np.array(pil_image.convert("RGB")).astype(_np.float32) / 255.0
-    img_tensor = torch.from_numpy(img_np).unsqueeze(0)  # [1,H,W,3]
+    img_tensor = torch.from_numpy(img_np).unsqueeze(0)  # [1, H, W, 3]
 
     # Encode reference image to latent
     ref_latent = _edit_vae.encode(img_tensor[:, :, :, :3])
 
-    # Positive conditioning
-    images_for_clip = [img_tensor[:, :, :, :3]]
-    tokens_pos = _edit_clip.tokenize(instruction, images=images_for_clip)
-    cond_pos = _edit_clip.encode_from_tokens_scheduled(tokens_pos)
-    cond_pos = node_helpers.conditioning_set_values(
+    # Positive conditioning — instruction + reference image
+    tokens_pos = _edit_clip.tokenize(instruction, images=[img_tensor[:, :, :, :3]])
+    cond_pos   = _edit_clip.encode_from_tokens_scheduled(tokens_pos)
+    cond_pos   = node_helpers.conditioning_set_values(
         cond_pos, {"reference_latents": [ref_latent]}, append=True
     )
 
-    # Negative conditioning
+    # Negative conditioning — empty
     tokens_neg = _edit_clip.tokenize("", images=[])
-    cond_neg = _edit_clip.encode_from_tokens_scheduled(tokens_neg)
+    cond_neg   = _edit_clip.encode_from_tokens_scheduled(tokens_neg)
 
-    # Latent noise
+    # Input latent
     latent = _edit_vae.encode(img_tensor[:, :, :, :3])
-    noise = comfy.sample.prepare_noise(latent, seed, None)
 
+    # Noise + sample
+    noise = comfy.sample.prepare_noise(latent, seed, None)
     samples_out = comfy.sample.sample(
         model=_edit_model,
         noise=noise,
@@ -224,7 +238,8 @@ def _run_edit(pil_image, instruction: str, steps: int = 4, strength: float = 0.7
         seed=seed,
     )
 
-    decoded = _edit_vae.decode(samples_out)
+    # VAE decode → PIL
+    decoded    = _edit_vae.decode(samples_out)          # [1, H, W, 3]
     decoded_np = decoded[0].clamp(0, 1).cpu().numpy()
     return PILImage.fromarray((decoded_np * 255).astype("uint8"))
 
