@@ -59,7 +59,8 @@ _EDIT_MODEL_ID = "Qwen/Qwen2.5-VL-7B-Instruct"
 
 # Qwen Image Edit pipeline — loaded lazily on first /edit call
 _edit_pipe = None
-_EDIT_PIPE_MODEL_ID = "Qwen/Qwen-Image-Edit"
+_EDIT_PIPE_MODEL_ID = "Qwen/Qwen-Image-Edit-2511"
+_EDIT_TRANSFORMER_PATH = "/mnt/e/models/diffusion_models/qwen_image_edit_fp8_e4m3fn.safetensors"
 
 
 def load_model(model_id: str, quant: str = "none"):
@@ -127,17 +128,23 @@ def _unload_edit():
 
 
 def _load_edit():
-    """Lazy-load QwenImageEditPipeline with bfloat16 on CUDA."""
+    """Load QwenImageEditPipeline using 2511 cache + FP8 transformer + sequential CPU offload."""
     global _edit_pipe
-    from diffusers import QwenImageEditPipeline
-    logger.info(f"Loading {_EDIT_PIPE_MODEL_ID} …")
-    _edit_pipe = QwenImageEditPipeline.from_pretrained(
-        _EDIT_PIPE_MODEL_ID,
+    from diffusers import QwenImageEditPipeline, QwenImageTransformer2DModel
+    logger.info("Loading FP8 transformer from local safetensors...")
+    transformer = QwenImageTransformer2DModel.from_single_file(
+        _EDIT_TRANSFORMER_PATH,
         torch_dtype=torch.bfloat16,
     )
-    _edit_pipe.to("cuda")
-    _edit_pipe.set_progress_bar_config(disable=None)
-    logger.info("✅ Qwen Image Edit pipeline ready")
+    logger.info(f"Loading pipeline from {_EDIT_PIPE_MODEL_ID} cache...")
+    _edit_pipe = QwenImageEditPipeline.from_pretrained(
+        _EDIT_PIPE_MODEL_ID,
+        transformer=transformer,
+        torch_dtype=torch.bfloat16,
+        local_files_only=True,
+    )
+    _edit_pipe.enable_sequential_cpu_offload()
+    logger.info("✅ Qwen Image Edit pipeline ready (FP8 + sequential CPU offload)")
 
 
 # ── Request schemas ───────────────────────────────────────────────────────────
