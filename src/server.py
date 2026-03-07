@@ -11,23 +11,26 @@ POST /generate
     Returns: PNG image bytes
 
 GET /health
-    Returns: { "active": "flux"|"qwen-vl"|"none", "flux_loaded": bool, "vl_loaded": bool,
+    Returns: { "active": "flux"|"qwen-vl"|"qwen-edit"|"none", "flux_loaded": bool, "vl_loaded": bool,
                "model": "...", "device": "cuda", "status": "ready" }
 
-POST /edit   [v2 stub — VL understanding only, pixel editing coming v2.1]
-    { "image": "/path/to/image.png", "instruction": "make the sky purple" }
-    Returns: { "response": "...", "note": "..." }
+POST /edit — pixel-level image edit via Qwen Image Edit fp8 + Lightning LoRA
+    Input: {"image": "path", "instruction": "...", "steps": 4, "cfg": 1.0, "seed": 42}
+    Returns: PNG image bytes
 
 GET /edit/status
-    Returns: { "loaded": bool, "model": "Qwen2.5-VL-7B-Instruct" }
+    Returns: { "loaded": bool, "model": "Qwen-Image-Edit-fp8 + Lightning-4step LoRA" }
 """
 
 import gc
 import io
 import os
+import sys
+import math
 import logging
 import argparse
 import threading
+import datetime
 
 import torch
 import uvicorn
@@ -51,10 +54,19 @@ _quant_mode = "none"
 # Generation lock — prevents concurrent requests from stacking (returns 503 if busy)
 _generate_lock = threading.Lock()
 
-# Qwen2.5-VL edit model — loaded lazily on first /edit call
+# Qwen2.5-VL edit model — loaded lazily on first /edit call (legacy stub)
 _vl_model = None
 _vl_processor = None
 _EDIT_MODEL_ID = "Qwen/Qwen2.5-VL-7B-Instruct"
+
+# Qwen Image Edit model (ComfyUI-backed, fp8 + Lightning LoRA)
+_qwen_edit_unet = None
+_qwen_edit_clip = None
+_qwen_edit_vae  = None
+_QWEN_EDIT_UNET = "/mnt/d/compy/ComfyUI/models/diffusion_models/qwen_image_edit_fp8_e4m3fn.safetensors"
+_QWEN_EDIT_CLIP = "/mnt/d/compy/ComfyUI/models/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors"
+_QWEN_EDIT_VAE  = "/mnt/d/compy/ComfyUI/models/vae/qwen_image_vae.safetensors"
+_QWEN_EDIT_LORA = "/mnt/d/compy/ComfyUI/models/loras/Qwen-Image-Lightning-4steps-V1.0.safetensors"
 
 
 def load_model(model_id: str, quant: str = "none"):
@@ -88,7 +100,7 @@ def _unload_flux():
     """Offload FLUX pipeline from GPU and free VRAM."""
     global _pipe
     if _pipe is not None:
-        logger.info("Swapping FLUX → Qwen2.5-VL for edit request")
+        logger.info("Swapping FLUX → Qwen edit for edit request")
         _pipe.to("cpu")
         del _pipe
         _pipe = None
@@ -110,6 +122,163 @@ def _unload_vl():
         gc.collect()
 
 
+def _unload_qwen_edit():
+    """Offload Qwen Image Edit model from GPU and free VRAM."""
+    global _qwen_edit_unet, _qwen_edit_clip, _qwen_edit_vae
+    if _qwen_edit_unet is not None:
+        _qwen_edit_unet = None
+        _qwen_edit_clip = None
+        _qwen_edit_vae = None
+        torch.cuda.empty_cache()
+        gc.collect()
+        logger.info("Qwen edit model unloaded")
+
+
+def _load_qwen_edit():
+    """
+    Load Qwen Image Edit fp8 model components via ComfyUI's loader API.
+
+    Uses:
+      - comfy.sd.load_diffusion_model (preferred over deprecated load_unet)
+      - comfy.sd.load_clip with CLIPType.QWEN_IMAGE
+      - comfy.sd.VAE loaded from state dict
+      - comfy.lora.load_lora_for_models to apply Lightning 4-step LoRA
+
+    Falls back: if ComfyUI import fails (dependency conflict with server venv),
+    raises HTTPException(503) — no alternative loader exists for these fp8 safetensors.
+    """
+    global _qwen_edit_unet, _qwen_edit_clip, _qwen_edit_vae
+
+    comfyui_path = "/mnt/d/compy/ComfyUI"
+    if comfyui_path not in sys.path:
+        sys.path.insert(0, comfyui_path)
+
+    try:
+        import comfy.sd
+        import comfy.utils
+        import comfy.lora
+        from comfy.sd import CLIPType
+    except ImportError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Qwen edit model not available — ComfyUI import failed: {e}",
+        )
+
+    try:
+        # 1. Load UNET (diffusion model)
+        logger.info(f"Loading Qwen edit UNET from {_QWEN_EDIT_UNET}")
+        model = comfy.sd.load_diffusion_model(_QWEN_EDIT_UNET)
+
+        # 2. Apply Lightning 4-step LoRA
+        logger.info(f"Applying Lightning LoRA from {_QWEN_EDIT_LORA}")
+        lora_sd = comfy.utils.load_torch_file(_QWEN_EDIT_LORA, safe_load=True)
+        model, _ = comfy.lora.load_lora_for_models(model, None, lora_sd, strength_model=1.0, strength_clip=0.0)
+
+        # 3. Load CLIP (Qwen2.5-VL-7B text encoder)
+        logger.info(f"Loading Qwen edit CLIP from {_QWEN_EDIT_CLIP}")
+        clip = comfy.sd.load_clip(
+            ckpt_paths=[_QWEN_EDIT_CLIP],
+            clip_type=CLIPType.QWEN_IMAGE,
+        )
+
+        # 4. Load VAE
+        logger.info(f"Loading Qwen edit VAE from {_QWEN_EDIT_VAE}")
+        vae_sd = comfy.utils.load_torch_file(_QWEN_EDIT_VAE, safe_load=True)
+        vae = comfy.sd.VAE(sd=vae_sd)
+
+        _qwen_edit_unet = model
+        _qwen_edit_clip = clip
+        _qwen_edit_vae = vae
+        logger.info("✅ Qwen Image Edit model loaded (fp8 + Lightning LoRA)")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load Qwen edit model: {e}")
+
+
+def _run_qwen_edit(pil_image, instruction: str, steps: int = 4, cfg: float = 1.0, seed: int = 42):
+    """
+    Run pixel-level image editing via Qwen Image Edit + Lightning LoRA.
+
+    Uses ComfyUI's sampling API:
+      - comfy.sample.sample with euler sampler + AuraFlow (simple) scheduler
+      - TextEncodeQwenImageEdit-style conditioning (instruction + reference image + ref latent)
+      - VAE encode/decode for latent space
+
+    Returns a PIL.Image.
+    """
+    import comfy.sample
+    import comfy.samplers
+    import comfy.utils
+    import node_helpers
+
+    # Scale image to ~1MP (1024x1024 equivalent)
+    import torch as _torch
+    import numpy as _np
+    from PIL import Image as PILImage
+
+    img_np = _np.array(pil_image.convert("RGB")).astype(_np.float32) / 255.0
+    # HWC → BHWC tensor
+    img_tensor = _torch.from_numpy(img_np).unsqueeze(0)  # [1, H, W, 3]
+
+    total_pixels = 1024 * 1024
+    h, w = img_tensor.shape[1], img_tensor.shape[2]
+    scale_by = math.sqrt(total_pixels / (h * w))
+    new_w = round(w * scale_by)
+    new_h = round(h * scale_by)
+
+    # BHWC → BCHW for upscale, then back
+    samples_bchw = img_tensor.movedim(-1, 1)
+    scaled_bchw = comfy.utils.common_upscale(samples_bchw, new_w, new_h, "area", "disabled")
+    scaled_bhwc = scaled_bchw.movedim(1, -1)  # [1, H', W', 3]
+
+    # Encode reference latent for conditioning
+    ref_latent = _qwen_edit_vae.encode(scaled_bhwc[:, :, :, :3])
+
+    # Build positive conditioning (instruction + image)
+    images_for_clip = [scaled_bhwc[:, :, :, :3]]
+    tokens_pos = _qwen_edit_clip.tokenize(instruction, images=images_for_clip)
+    cond_pos = _qwen_edit_clip.encode_from_tokens_scheduled(tokens_pos)
+    cond_pos = node_helpers.conditioning_set_values(
+        cond_pos, {"reference_latents": [ref_latent]}, append=True
+    )
+
+    # Build negative conditioning (empty)
+    tokens_neg = _qwen_edit_clip.tokenize("", images=[])
+    cond_neg = _qwen_edit_clip.encode_from_tokens_scheduled(tokens_neg)
+
+    # VAE encode input image to get latent shape
+    latent = _qwen_edit_vae.encode(scaled_bhwc[:, :, :, :3])
+    latent_image = {"samples": latent}
+
+    # Generate noise
+    noise = comfy.sample.prepare_noise(latent, seed, None)
+
+    # Run sampler (euler + AuraFlow/simple scheduler, 4 steps with Lightning LoRA)
+    samples_out = comfy.sample.sample(
+        model=_qwen_edit_unet,
+        noise=noise,
+        steps=steps,
+        cfg=cfg,
+        sampler_name="euler",
+        scheduler="simple",
+        positive=cond_pos,
+        negative=cond_neg,
+        latent_image=latent_image["samples"],
+        denoise=1.0,
+        seed=seed,
+    )
+
+    # VAE decode
+    decoded = _qwen_edit_vae.decode(samples_out)  # [1, H, W, 3] float tensor 0–1
+
+    # Convert to PIL
+    decoded_np = decoded[0].clamp(0, 1).cpu().numpy()
+    out_img = PILImage.fromarray((decoded_np * 255).astype("uint8"))
+    return out_img
+
+
 # ── Request schemas ───────────────────────────────────────────────────────────
 class GenerateRequest(BaseModel):
     prompt: str
@@ -126,18 +295,22 @@ class GenerateRequest(BaseModel):
 
 
 class EditRequest(BaseModel):
-    image: str = Field(description="Path to input image")
-    instruction: str = Field(description="Edit instruction, e.g. 'make the sky purple'")
-    max_new_tokens: int = 512
+    image: str = Field(description="Path to input image (fantasia/ or inbound/ dir)")
+    instruction: str = Field(description="Edit instruction, e.g. 'make the person look like a cyberpunk robot'")
+    steps: int = Field(default=4, ge=1, le=50, description="Sampling steps (default 4 with Lightning LoRA)")
+    cfg: float = Field(default=1.0, ge=0.5, le=10.0, description="CFG scale")
+    seed: int = Field(default=42, description="Random seed")
 
     @property
     def safe_image_path(self) -> str:
-        """Resolve and validate image path is within allowed directory."""
-        import os
-        allowed_dir = os.path.realpath(os.path.expanduser("~/.openclaw/media/fantasia"))
+        """Resolve and validate image path is within allowed directories."""
+        allowed_dirs = [
+            os.path.realpath(os.path.expanduser("~/.openclaw/media/fantasia")),
+            os.path.realpath(os.path.expanduser("~/.openclaw/media/inbound")),
+        ]
         resolved = os.path.realpath(os.path.expanduser(self.image))
-        if not resolved.startswith(allowed_dir + os.sep) and resolved != allowed_dir:
-            raise ValueError(f"Image path not allowed: must be within {allowed_dir}")
+        if not any(resolved.startswith(d + os.sep) or resolved == d for d in allowed_dirs):
+            raise ValueError(f"Image path not allowed: must be within fantasia/ or inbound/")
         return resolved
 
 
@@ -149,6 +322,8 @@ def health():
         active = "flux"
     elif _vl_model is not None:
         active = "qwen-vl"
+    elif _qwen_edit_unet is not None:
+        active = "qwen-edit"
     busy = not _generate_lock.acquire(blocking=False)
     if not busy:
         _generate_lock.release()
@@ -156,6 +331,7 @@ def health():
         "active": active,
         "flux_loaded": _pipe is not None,
         "vl_loaded": _vl_model is not None,
+        "qwen_edit_loaded": _qwen_edit_unet is not None,
         "model": _model_id,
         "device": _device or "cuda",
         "status": "busy" if busy else "ready",
@@ -181,8 +357,9 @@ def generate(req: GenerateRequest):
 def _do_generate(req: GenerateRequest):
     global _pipe
 
-    # Swap out Qwen VL if loaded
+    # Swap out Qwen models if loaded
     _unload_vl()
+    _unload_qwen_edit()
 
     # Load FLUX if not loaded
     if _pipe is None:
@@ -243,22 +420,22 @@ def _do_generate(req: GenerateRequest):
     return Response(content=buf.read(), media_type="image/png", headers={"X-Saved-Paths": ",".join(paths)})
 
 
-# ── Edit endpoint (v2 stub — Qwen2.5-VL visual understanding) ─────────────────
+# ── Edit endpoint — Qwen Image Edit fp8 + Lightning LoRA ─────────────────────
 @app.get("/edit/status")
 def edit_status():
-    return {"loaded": _vl_model is not None, "model": _EDIT_MODEL_ID}
+    return {"loaded": _qwen_edit_unet is not None, "model": "Qwen-Image-Edit-fp8 + Lightning-4step LoRA"}
 
 
 @app.post("/edit")
 async def edit_image(req: EditRequest):
     """
-    v2 stub: Uses Qwen2.5-VL-7B-Instruct for visual understanding of edit instructions.
-    Returns a text description/analysis of the requested edit.
-    NOTE: This is NOT pixel-level editing. Diffusion inpainting (true pixel editing) is planned for v2.1.
+    Pixel-level image editing via Qwen Image Edit fp8 + Lightning 4-step LoRA.
+    Uses ComfyUI's sampling pipeline (euler + simple scheduler).
+    Returns edited PNG bytes; also saves to ~/.openclaw/media/fantasia/<timestamp>_edit.png.
     """
-    global _vl_model, _vl_processor
+    global _qwen_edit_unet, _qwen_edit_clip, _qwen_edit_vae
 
-    # Validate input image exists and is within allowed directory
+    # Validate input image path
     try:
         safe_path = req.safe_image_path
     except ValueError as e:
@@ -267,73 +444,43 @@ async def edit_image(req: EditRequest):
     if not os.path.exists(safe_path):
         raise HTTPException(status_code=400, detail=f"Image not found: {safe_path}")
 
-    # Swap out FLUX before loading Qwen VL (16GB VRAM — can't coexist)
+    # Swap out other models (16GB VRAM — can't coexist)
     _unload_flux()
+    _unload_vl()
 
-    # Lazy load Qwen2.5-VL
-    if _vl_model is None:
-        logger.info(f"Loading {_EDIT_MODEL_ID} in 4-bit (bitsandbytes)...")
-        try:
-            from transformers import AutoModelForVision2Seq, AutoProcessor, BitsAndBytesConfig
-            bnb_config = BitsAndBytesConfig(load_in_4bit=True)
-            _vl_processor = AutoProcessor.from_pretrained(_EDIT_MODEL_ID, trust_remote_code=True)
-            _vl_model = AutoModelForVision2Seq.from_pretrained(
-                _EDIT_MODEL_ID,
-                quantization_config=bnb_config,
-                trust_remote_code=True,
-                device_map="auto",
-            )
-            logger.info(f"✅ {_EDIT_MODEL_ID} loaded in 4-bit")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to load edit model: {e}")
+    # Lazy load Qwen Image Edit
+    if _qwen_edit_unet is None:
+        _load_qwen_edit()
 
-    # Build chat message with image + instruction
     try:
         from PIL import Image as PILImage
-        image = PILImage.open(safe_path).convert("RGB")
 
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image", "image": image},
-                    {"type": "text", "text": req.instruction},
-                ],
-            }
-        ]
-
-        # Apply Qwen2.5-VL chat template
-        text = _vl_processor.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
+        pil_image = PILImage.open(safe_path).convert("RGB")
+        result_image = _run_qwen_edit(
+            pil_image,
+            instruction=req.instruction,
+            steps=req.steps,
+            cfg=req.cfg,
+            seed=req.seed,
         )
-        inputs = _vl_processor(
-            text=[text],
-            images=[image],
-            return_tensors="pt",
+
+        # Save result
+        out_dir = os.path.expanduser("~/.openclaw/media/fantasia")
+        os.makedirs(out_dir, exist_ok=True)
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        save_path = os.path.join(out_dir, f"{timestamp}_edit.png")
+        result_image.save(save_path)
+
+        buf = io.BytesIO()
+        result_image.save(buf, format="PNG")
+        png_bytes = buf.getvalue()
+
+        return Response(
+            content=png_bytes,
+            media_type="image/png",
+            headers={"X-Saved-Path": save_path},
         )
-        # Move inputs to model device
-        device = next(_vl_model.parameters()).device
-        inputs = {k: v.to(device) if hasattr(v, "to") else v for k, v in inputs.items()}
 
-        with torch.no_grad():
-            output_ids = _vl_model.generate(
-                **inputs,
-                max_new_tokens=req.max_new_tokens,
-            )
-
-        # Decode only new tokens
-        input_len = inputs["input_ids"].shape[1]
-        generated = output_ids[0][input_len:]
-        response_text = _vl_processor.decode(generated, skip_special_tokens=True)
-
-        return {
-            "response": response_text,
-            "model": _EDIT_MODEL_ID,
-            "note": (
-                "v2 stub: This is visual understanding (VL), not pixel-level editing. "
-                "True diffusion inpainting is planned for v2.1."
-            ),
-        }
     except HTTPException:
         raise
     except Exception as e:
