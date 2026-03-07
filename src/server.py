@@ -59,7 +59,7 @@ _EDIT_MODEL_ID = "Qwen/Qwen2.5-VL-7B-Instruct"
 
 # Qwen Image Edit pipeline — loaded lazily on first /edit call
 _edit_pipe = None
-_EDIT_PIPE_MODEL_ID = "Qwen/Qwen-Image-Edit-2511"
+_EDIT_PIPE_MODEL_ID = "Qwen/Qwen-Image-Edit"
 
 
 def load_model(model_id: str, quant: str = "none"):
@@ -127,16 +127,15 @@ def _unload_edit():
 
 
 def _load_edit():
-    """Lazy-load QwenImageEditPlusPipeline with CPU offload (20B model, 16GB VRAM)."""
+    """Lazy-load QwenImageEditPipeline exactly as per model card."""
     global _edit_pipe
-    from diffusers import QwenImageEditPlusPipeline
-    logger.info(f"Loading {_EDIT_PIPE_MODEL_ID} with CPU offload …")
-    _edit_pipe = QwenImageEditPlusPipeline.from_pretrained(
-        _EDIT_PIPE_MODEL_ID,
-        torch_dtype=torch.bfloat16,
-    )
-    _edit_pipe.enable_model_cpu_offload()
-    logger.info("✅ Qwen Image Edit pipeline ready (CPU offload enabled)")
+    from diffusers import QwenImageEditPipeline
+    logger.info(f"Loading {_EDIT_PIPE_MODEL_ID} …")
+    _edit_pipe = QwenImageEditPipeline.from_pretrained(_EDIT_PIPE_MODEL_ID)
+    _edit_pipe.to(torch.bfloat16)
+    _edit_pipe.to("cuda")
+    _edit_pipe.set_progress_bar_config(disable=None)
+    logger.info("✅ Qwen Image Edit pipeline ready")
 
 
 # ── Request schemas ───────────────────────────────────────────────────────────
@@ -316,14 +315,12 @@ async def edit_image(req: EditRequest):
 
         with torch.inference_mode():
             result = _edit_pipe(
-                image=[pil_image],
+                image=pil_image,
                 prompt=req.prompt,
                 negative_prompt=req.negative_prompt,
                 num_inference_steps=req.steps,
                 true_cfg_scale=req.true_cfg_scale,
-                guidance_scale=req.guidance_scale,
                 generator=torch.manual_seed(req.seed),
-                num_images_per_prompt=req.count,
             )
 
         for i, img in enumerate(result.images):
