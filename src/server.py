@@ -128,23 +128,17 @@ def _unload_edit():
 
 
 def _load_edit():
-    """Load QwenImageEditPipeline using 2511 cache + FP8 transformer + sequential CPU offload."""
+    """Load QwenImageEditPipeline from 2511 cache with sequential CPU offload."""
     global _edit_pipe
-    from diffusers import QwenImageEditPipeline, QwenImageTransformer2DModel
-    logger.info("Loading FP8 transformer from local safetensors...")
-    transformer = QwenImageTransformer2DModel.from_single_file(
-        _EDIT_TRANSFORMER_PATH,
-        torch_dtype=torch.bfloat16,
-    )
+    from diffusers import QwenImageEditPipeline
     logger.info(f"Loading pipeline from {_EDIT_PIPE_MODEL_ID} cache...")
     _edit_pipe = QwenImageEditPipeline.from_pretrained(
         _EDIT_PIPE_MODEL_ID,
-        transformer=transformer,
         torch_dtype=torch.bfloat16,
         local_files_only=True,
     )
     _edit_pipe.enable_sequential_cpu_offload()
-    logger.info("✅ Qwen Image Edit pipeline ready (FP8 + sequential CPU offload)")
+    logger.info("✅ Qwen Image Edit pipeline ready (sequential CPU offload)")
 
 
 # ── Request schemas ───────────────────────────────────────────────────────────
