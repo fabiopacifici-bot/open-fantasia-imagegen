@@ -127,12 +127,14 @@ def _unload_edit():
 
 
 def _load_edit():
-    """Lazy-load QwenImageEditPipeline exactly as per model card."""
+    """Lazy-load QwenImageEditPipeline with bfloat16 on CUDA."""
     global _edit_pipe
     from diffusers import QwenImageEditPipeline
     logger.info(f"Loading {_EDIT_PIPE_MODEL_ID} …")
-    _edit_pipe = QwenImageEditPipeline.from_pretrained(_EDIT_PIPE_MODEL_ID)
-    _edit_pipe.to(torch.bfloat16)
+    _edit_pipe = QwenImageEditPipeline.from_pretrained(
+        _EDIT_PIPE_MODEL_ID,
+        torch_dtype=torch.bfloat16,
+    )
     _edit_pipe.to("cuda")
     _edit_pipe.set_progress_bar_config(disable=None)
     logger.info("✅ Qwen Image Edit pipeline ready")
