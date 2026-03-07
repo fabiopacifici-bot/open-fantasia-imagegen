@@ -63,10 +63,10 @@ _EDIT_MODEL_ID = "Qwen/Qwen2.5-VL-7B-Instruct"
 _qwen_edit_unet = None
 _qwen_edit_clip = None
 _qwen_edit_vae  = None
-_QWEN_EDIT_UNET = "/mnt/d/compy/ComfyUI/models/diffusion_models/qwen_image_edit_fp8_e4m3fn.safetensors"
-_QWEN_EDIT_CLIP = "/mnt/d/compy/ComfyUI/models/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors"
-_QWEN_EDIT_VAE  = "/mnt/d/compy/ComfyUI/models/vae/qwen_image_vae.safetensors"
-_QWEN_EDIT_LORA = "/mnt/d/compy/ComfyUI/models/loras/Qwen-Image-Lightning-4steps-V1.0.safetensors"
+_QWEN_EDIT_UNET = "/mnt/e/models/diffusion_models/qwen_image_edit_fp8_e4m3fn.safetensors"
+_QWEN_EDIT_CLIP = "/mnt/e/models/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors"
+_QWEN_EDIT_VAE  = "/mnt/e/models/vae/qwen_image_vae.safetensors"
+_QWEN_EDIT_LORA = "/mnt/e/models/loras/Qwen-Image-Lightning-4steps-V1.0.safetensors"
 
 
 def load_model(model_id: str, quant: str = "none"):
@@ -149,7 +149,7 @@ def _load_qwen_edit():
     """
     global _qwen_edit_unet, _qwen_edit_clip, _qwen_edit_vae
 
-    comfyui_path = "/mnt/d/compy/ComfyUI"
+    comfyui_path = "/mnt/d/compy/ComfyUI"  # ComfyUI installation (not models — models are at /mnt/e/models/)
     if comfyui_path not in sys.path:
         sys.path.insert(0, comfyui_path)
 
