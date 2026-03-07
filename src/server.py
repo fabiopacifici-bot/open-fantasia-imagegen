@@ -234,6 +234,29 @@ def _do_generate(req: GenerateRequest):
     return Response(content=buf.read(), media_type="image/png", headers={"X-Saved-Paths": ",".join(paths)})
 
 
+@app.get("/health")
+def health():
+    active = "none"
+    if _pipe is not None:
+        active = "flux"
+    elif _vl_model is not None:
+        active = "qwen-vl"
+    elif _edit_pipe is not None:
+        active = "qwen-edit"
+    busy = not _generate_lock.acquire(blocking=False)
+    if not busy:
+        _generate_lock.release()
+    return {
+        "active": active,
+        "flux_loaded": _pipe is not None,
+        "vl_loaded": _vl_model is not None,
+        "edit_loaded": _edit_pipe is not None,
+        "model": _model_id,
+        "device": _device or "cuda",
+        "status": "busy" if busy else "ready",
+        "quant": _quant_mode,
+    }
+
 
 # ── Edit endpoint — Qwen Image Edit 2511 ─────────────────────────────────────
 class EditRequest(BaseModel):
@@ -321,3 +344,25 @@ async def edit_image(req: EditRequest):
     except Exception as e:
         logger.exception("Edit inference failed")
         raise HTTPException(status_code=500, detail=f"Edit inference failed: {e}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Open Fantasia inference server")
+    parser.add_argument(
+        "--model",
+        default="stable-diffusion-v1-5/stable-diffusion-v1-5",
+        help="HuggingFace model ID to load",
+    )
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument(
+        "--quant",
+        default="none",
+        choices=["none", "autoquant", "int4"],
+        help="Quantization mode (default: none)",
+    )
+    args = parser.parse_args()
+
+    load_model(args.model, quant=args.quant)
+    warmup_model()
+    uvicorn.run(app, host=args.host, port=args.port)
