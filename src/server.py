@@ -60,7 +60,6 @@ _EDIT_MODEL_ID = "Qwen/Qwen2.5-VL-7B-Instruct"
 # Qwen Image Edit pipeline — loaded lazily on first /edit call
 _edit_pipe = None
 _EDIT_PIPE_MODEL_ID = "Qwen/Qwen-Image-Edit-2511"
-_EDIT_TRANSFORMER_PATH = "/mnt/e/models/qwen_edit_fp8_transformer"
 
 
 def load_model(model_id: str, quant: str = "none"):
@@ -128,24 +127,17 @@ def _unload_edit():
 
 
 def _load_edit():
-    """Load QwenImageEditPipeline: FP8 transformer from local dir + 2511 cache for rest."""
+    """Load QwenImageEditPipeline from 2511 cache (full BF16, CPU offload for 16GB VRAM)."""
     global _edit_pipe
-    from diffusers import QwenImageEditPipeline, QwenImageTransformer2DModel
-    logger.info("Loading FP8 transformer from local dir...")
-    transformer = QwenImageTransformer2DModel.from_pretrained(
-        _EDIT_TRANSFORMER_PATH,
-        torch_dtype=torch.bfloat16,
-    )
-    transformer.to("cuda")
-    logger.info(f"Loading pipeline from {_EDIT_PIPE_MODEL_ID} (text_encoder, vae, etc.)...")
+    from diffusers import QwenImageEditPipeline
+    logger.info(f"Loading QwenImageEditPipeline from {_EDIT_PIPE_MODEL_ID}...")
     _edit_pipe = QwenImageEditPipeline.from_pretrained(
         _EDIT_PIPE_MODEL_ID,
-        transformer=transformer,
         torch_dtype=torch.bfloat16,
         local_files_only=True,
     )
-    _edit_pipe.to("cuda")
-    logger.info("✅ Qwen Image Edit pipeline ready (FP8 transformer on CUDA)")
+    _edit_pipe.enable_model_cpu_offload()
+    logger.info("✅ Qwen Image Edit pipeline ready (CPU offload enabled)")
 
 
 # ── Request schemas ───────────────────────────────────────────────────────────
@@ -293,9 +285,15 @@ class EditRequest(BaseModel):
 @app.post("/edit")
 async def edit_image(req: EditRequest):
     """
-    Context-aware image editing via Qwen-Image-Edit-2511 (QwenImageEditPlusPipeline).
-    Supports multi-image input, instruction-following, identity-preserving edits.
+    DISABLED — Qwen Image Edit endpoint is blocked to prevent OOM/system crash.
+    The heavy model load caused system instability. Use /generate with sd-turbo instead.
     """
+    raise HTTPException(
+        status_code=503,
+        detail="Image edit endpoint is disabled. Qwen Image Edit model is too resource-intensive for this system."
+    )
+
+    # --- DISABLED CODE BELOW ---
     global _edit_pipe
 
     try:
