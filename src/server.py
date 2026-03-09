@@ -34,11 +34,20 @@ import torch
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
+from typing import Optional
 from pydantic import BaseModel, Field
 
 from imagegen import get_pipeline, enhance_prompt, resolve_size, QUALITY_PRESETS
 
 logger = logging.getLogger(__name__)
+
+MODEL_ALIASES = {
+    "schnell":   "city96/FLUX.1-schnell-gguf/flux1-schnell-Q4_K_S.gguf",
+    "klein":     "black-forest-labs/FLUX.2-klein-base-9B",
+    "sd15":      "stable-diffusion-v1-5/stable-diffusion-v1-5",
+    "turbo":     "stabilityai/sd-turbo",
+    "turbo-xl":  "stabilityai/sdxl-turbo",
+}
 
 # ── App ──────────────────────────────────────────────────────────────────────
 app = FastAPI(title="Open Fantasia", version="2.0")
@@ -126,6 +135,21 @@ def _unload_edit():
         gc.collect()
 
 
+def _unload_flux_for_swap():
+    global _pipe
+    if _pipe is not None:
+        del _pipe
+        _pipe = None
+        import gc
+        torch.cuda.empty_cache()
+        gc.collect()
+        logger.info("VRAM freed for model swap")
+
+
+def _resolve_model_alias(model_str: str) -> str:
+    return MODEL_ALIASES.get(model_str, model_str)
+
+
 def _load_edit():
     """Load QwenImageEditPipeline from 2511 cache (full BF16, CPU offload for 16GB VRAM)."""
     global _edit_pipe
@@ -153,6 +177,7 @@ class GenerateRequest(BaseModel):
     count: int = Field(default=1, ge=1, le=4, description="Number of images to generate (1-4)")
     quant: str = Field(default="autoquant", pattern="^(none|autoquant|int4)$",
                        description="Quantization mode: none | autoquant | int4")
+    model: Optional[str] = Field(default=None, description="Model alias or full HF ID; None = use startup default")
 
 
 @app.post("/generate")
@@ -176,11 +201,20 @@ def _do_generate(req: GenerateRequest):
     # Swap out Qwen models if loaded
     _unload_vl()
 
-    # Load FLUX if not loaded
+    # Resolve requested model (alias or full ID)
+    requested_id = _resolve_model_alias(req.model) if req.model else _model_id
+
+    if requested_id is None:
+        raise HTTPException(status_code=503, detail="Model not configured — restart server with --model")
+
+    # Hot-swap if different model requested
+    if _pipe is not None and requested_id != _model_id:
+        logger.info(f"Hot-swapping model: {_model_id} → {requested_id}")
+        _unload_flux_for_swap()
+
+    # Load if not loaded (initial load or after swap)
     if _pipe is None:
-        if _model_id is None:
-            raise HTTPException(status_code=503, detail="Model not configured — restart server with --model")
-        load_model(_model_id, quant=_quant_mode)
+        load_model(requested_id, quant=_quant_mode)
 
     # If quant in request differs from loaded model, warn (can't hot-swap)
     if req.quant != _quant_mode:
