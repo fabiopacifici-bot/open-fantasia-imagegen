@@ -46,6 +46,7 @@ MODEL_ALIASES = {
     "sd15":      "stable-diffusion-v1-5/stable-diffusion-v1-5",
     "turbo":     "stabilityai/sd-turbo",
     "turbo-xl":  "stabilityai/sdxl-turbo",
+    "klein":     "black-forest-labs/FLUX.2-klein-base-9B",
 }
 
 # ── App ──────────────────────────────────────────────────────────────────────
