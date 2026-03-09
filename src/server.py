@@ -43,10 +43,10 @@ logger = logging.getLogger(__name__)
 
 MODEL_ALIASES = {
     "schnell":   "city96/FLUX.1-schnell-gguf/flux1-schnell-Q4_K_S.gguf",
-    "klein":     "black-forest-labs/FLUX.2-klein-base-9B",
     "sd15":      "stable-diffusion-v1-5/stable-diffusion-v1-5",
     "turbo":     "stabilityai/sd-turbo",
     "turbo-xl":  "stabilityai/sdxl-turbo",
+    "klein":     "black-forest-labs/FLUX.2-klein-base-9B",
 }
 
 # ── App ──────────────────────────────────────────────────────────────────────
@@ -138,9 +138,9 @@ def _unload_edit():
 def _unload_flux_for_swap():
     global _pipe
     if _pipe is not None:
+        _pipe.to("cpu")
         del _pipe
         _pipe = None
-        import gc
         torch.cuda.empty_cache()
         gc.collect()
         logger.info("VRAM freed for model swap")
