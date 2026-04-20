@@ -2,25 +2,28 @@
 name: open-fantasia-imagegen
 description: Local image generation with FLUX or Stable Diffusion. Generate images from text prompts on your GPU.
 metadata:
-  version: 1.2.0
+  version: 1.3.0
+  commands:
+    - /fantasia
 ---
 
 # Open Fantasia — Image Generation Skill
 
 ## Slash Command
-`/fantasia <prompt> [--quality low|mid|high] [--model schnell|klein|sd15] [--count 1-4] [--raw|--enhance]`
+`/fantasia <prompt> [--quality low|mid|high] [--model schnell|klein|sd15|turbo] [--count 1-4] [--raw|--enhance]`
 
 ## Description
 Generate images locally on GPU using the persistent Open Fantasia inference server.
 Model stays loaded in VRAM — near-instant generation after first startup.
-Default model: **FLUX.1-schnell BF16** (~6.6GB, fast on 8GB+ VRAM).
+Default model: **FLUX.1-schnell BF16** (~16GB VRAM, ~33GB disk).
 
 ## First-Time Setup
 ```bash
 cd repositories/open-fantasia-imagegen
+cp .env.example .env   # add your HF_TOKEN
 bash setup.sh
 ```
-This downloads the recommended BF16 model (black-forest-labs/FLUX.1-schnell), installs dependencies, and starts the server as a systemd service.
+This installs dependencies, downloads the recommended model, and starts the server as a systemd service.
 
 ---
 
@@ -32,6 +35,7 @@ This downloads the recommended BF16 model (black-forest-labs/FLUX.1-schnell), in
 /fantasia portrait of a woman --raw
 /fantasia 3 variations of a forest --count 3
 /fantasia a dragon --model klein
+/fantasia fast test --model turbo
 ```
 
 ## Flags
@@ -40,15 +44,23 @@ This downloads the recommended BF16 model (black-forest-labs/FLUX.1-schnell), in
 | `--raw`         | Prompt sent directly to the model — no enhancement. |
 | `--enhance`     | (default) AI polishes your prompt before generation. |
 | `--count N`     | Generate N images (1–4). Each uses a different seed. |
-| `--model X`     | Select model: `schnell` (default BF16), `klein`, `sd15`. |
+| `--model X`     | Select model: `schnell` (default), `klein`, `sd15`, `turbo`. |
 | `--quality X`   | `low` / `mid` / `high` (see presets below). |
 
-## Quality Presets (schnell)
-| Flag      | Resolution  | Steps | Speed (RTX 4090 Mobile) |
-|-----------|-------------|-------|--------------------------|
-| `--quality low`  | 512×512   | 4   | ~5-10s  |
-| `--quality mid`  | 768×768   | 8   | ~15-25s |
-| `--quality high` | 1024×1024 | 20  | ~40-60s |
+## Models
+| Flag | Model | VRAM | Notes |
+|------|-------|------|-------|
+| `schnell` (default) | `black-forest-labs/FLUX.1-schnell` | ~16GB | Best quality, BF16 precision |
+| `klein` | `black-forest-labs/FLUX.2-klein-base-9B` | ~16GB | Experimental, lighter |
+| `sd15` | `stable-diffusion-v1-5/stable-diffusion-v1-5` | ~4GB | Fast, classic |
+| `turbo` | `stabilityai/sd-turbo` | ~4GB | Near-instant, ~1-3s at 512×512 |
+
+## Quality Presets
+| Flag      | Resolution  | Steps | Approx. Speed       |
+|-----------|-------------|-------|---------------------|
+| `--quality low`  | 512×512   | 4   | ~1-5 min (GPU dependent)  |
+| `--quality mid`  | 768×768   | 8   | ~3-10 min (GPU dependent) |
+| `--quality high` | 1024×1024 | 20  | ~10-20 min (GPU dependent)|
 
 Default: `low`
 
@@ -66,17 +78,13 @@ Send this formatted message with inline buttons:
 >
 > Generate images on your GPU. Near-instant after first load.
 >
-> **Usage:** `/fantasia <prompt> [--quality low|mid|high] [--model schnell|klein|sd15] [--count 1-4] [--raw|--enhance]`
+> **Usage:** `/fantasia <prompt> [--quality low|mid|high] [--model schnell|klein|sd15|turbo] [--count 1-4] [--raw|--enhance]`
 >
 > **Available models:**
-> - ⚡ FLUX.1-schnell BF16 — native (default, ~6.6GB)
+> - ⚡ FLUX.1-schnell BF16 — best quality (default, ~16GB VRAM)
 > - 🌸 FLUX.2-klein — lighter experimental
-> - 🎨 SD 1.5 — classic fallback
->
-> **Quality presets (schnell):**
-> - 🔹 Low — 512×512, 4 steps (~5-10s)
-> - 🔷 Mid — 768×768, 8 steps (~15-25s)
-> - 🔶 High — 1024×1024, 20 steps (~40-60s)
+> - 🎨 SD 1.5 — classic fallback (~4GB VRAM)
+> - ⚡ SD-Turbo — near-instant (~1-3s, ~4GB VRAM)
 
 Buttons (3 rows):
 
@@ -84,6 +92,7 @@ Row 1 — Model:
 - `⚡ FLUX schnell` → callback_data: `fantasia_model_schnell`
 - `🌸 FLUX klein` → callback_data: `fantasia_model_klein`
 - `🎨 SD 1.5` → callback_data: `fantasia_model_sd15`
+- `⚡ Turbo` → callback_data: `fantasia_model_turbo`
 
 Row 2 — Quality:
 - `🔹 Low` → callback_data: `fantasia_quality_low`
@@ -106,10 +115,11 @@ Main session stays responsive throughout.
 1. Extract everything after `/fantasia` as the prompt
 2. Check for `--quality low|mid|high`; strip it; default `low`
 3. Check for `--count N` (1-4); strip it; default `1`
-4. Check for `--model schnell|klein|sd15`; strip it; default `schnell`
+4. Check for `--model schnell|klein|sd15|turbo`; strip it; default `schnell`
    - `schnell` → `black-forest-labs/FLUX.1-schnell`
    - `klein`   → `black-forest-labs/FLUX.2-klein-base-9B`
    - `sd15`    → `stable-diffusion-v1-5/stable-diffusion-v1-5`
+   - `turbo`   → `stabilityai/sd-turbo`
 5. Check for `--raw`: set `enhance: false`; else `enhance: true` (default)
 6. Check server health: `GET http://localhost:8765/health`
    - If down: reply "🚫 Fantasia offline — restarting..." → `systemctl --user restart fantasia.service` → wait 20s → retry
@@ -128,6 +138,7 @@ Main session stays responsive throughout.
 ### First time (recommended)
 ```bash
 cd repositories/open-fantasia-imagegen
+cp .env.example .env   # add your HF_TOKEN
 bash setup.sh
 ```
 
@@ -148,18 +159,18 @@ cd repositories/open-fantasia-imagegen
 
 ## Requirements
 - Python 3.10+
-- CUDA GPU with 8GB+ VRAM (16GB recommended for mid/high quality)
-- HF_TOKEN environment variable (free HuggingFace account)
-- ~34GB disk space for default BF16 model (one-time download)
+- CUDA GPU with 8GB+ VRAM (16GB recommended for FLUX mid/high quality)
+- `HF_TOKEN` in `.env` (free HuggingFace account — see `.env.example`)
+- ~33GB disk space for default BF16 model (one-time download); ~4GB for sd15/turbo
 
 ## Output Location
 `~/.openclaw/media/fantasia/`
-On Windows WSL: `\\wsl$\kali-linux\home\<user>\\.openclaw\media\fantasia\`
+On Windows WSL: `\\wsl$\kali-linux\home\<user>\.openclaw\media\fantasia\`
 
 ---
 
 ## Troubleshooting
-- **Slow generation:** Ensure FLUX.1-schnell BF16 model is loaded (check `/health` response). BF16 models are slow on 16GB VRAM.
-- **OOM error:** Switch to `--quality low` or use `--model sd15`
+- **Slow generation:** Use `--model turbo` or `--quality low` for faster results
+- **OOM error:** Switch to `--model sd15` or `--model turbo` (~4GB VRAM)
 - **Connection refused:** `systemctl --user restart fantasia.service`; check logs: `journalctl --user -u fantasia.service -n 50`
 - **First run slow:** Model loads from disk once (~10-20s), then stays in VRAM
