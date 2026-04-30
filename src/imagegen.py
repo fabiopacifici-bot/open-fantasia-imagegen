@@ -60,12 +60,15 @@ def resolve_size(quality=None, width=None, height=None, steps=None):
 
 
 MODEL_ALIASES = {
-    "turbo":    "stabilityai/sd-turbo",
-    "turbo-xl": "stabilityai/sdxl-turbo",
-    "schnell":  "black-forest-labs/FLUX.1-schnell",
-    "klein":    "black-forest-labs/FLUX.2-klein-base-9B",
-    "sd15":     "stable-diffusion-v1-5/stable-diffusion-v1-5",
-    "z-img":    "Zhibei-ai/Z-Img",
+    # Standard HF models
+    "turbo":       "stabilityai/sd-turbo",
+    "turbo-xl":    "stabilityai/sdxl-turbo",
+    "schnell":     "black-forest-labs/FLUX.1-schnell",
+    "klein":       "black-forest-labs/FLUX.2-klein-base-9B",
+    "sd15":        "stable-diffusion-v1-5/stable-diffusion-v1-5",
+    "z-img":       "Zhibei-ai/Z-Img",
+    # GGUF quantized variants
+    "schnell-gguf": "city96/FLUX.1-schnell-gguf/flux1-schnell-Q4_K_S.gguf",
 }
 
 

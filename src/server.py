@@ -37,17 +37,9 @@ from fastapi.responses import Response
 from typing import Optional
 from pydantic import BaseModel, Field
 
-from imagegen import get_pipeline, enhance_prompt, resolve_size, QUALITY_PRESETS
+from imagegen import get_pipeline, enhance_prompt, resolve_size, QUALITY_PRESETS, MODEL_ALIASES
 
 logger = logging.getLogger(__name__)
-
-MODEL_ALIASES = {
-    "schnell":   "city96/FLUX.1-schnell-gguf/flux1-schnell-Q4_K_S.gguf",
-    "sd15":      "stable-diffusion-v1-5/stable-diffusion-v1-5",
-    "turbo":     "stabilityai/sd-turbo",
-    "turbo-xl":  "stabilityai/sdxl-turbo",
-    "klein":     "black-forest-labs/FLUX.2-klein-base-9B",
-}
 
 # ── App ──────────────────────────────────────────────────────────────────────
 app = FastAPI(title="Open Fantasia", version="2.0")
