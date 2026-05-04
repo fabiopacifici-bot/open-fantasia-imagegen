@@ -37,17 +37,15 @@ from fastapi.responses import Response
 from typing import Optional
 from pydantic import BaseModel, Field
 
-from imagegen import get_pipeline, enhance_prompt, resolve_size, QUALITY_PRESETS
+from imagegen import (
+    get_pipeline,
+    enhance_prompt,
+    resolve_size,
+    QUALITY_PRESETS,
+    MODEL_ALIASES,
+)
 
 logger = logging.getLogger(__name__)
-
-MODEL_ALIASES = {
-    "schnell":   "city96/FLUX.1-schnell-gguf/flux1-schnell-Q4_K_S.gguf",
-    "sd15":      "stable-diffusion-v1-5/stable-diffusion-v1-5",
-    "turbo":     "stabilityai/sd-turbo",
-    "turbo-xl":  "stabilityai/sdxl-turbo",
-    "klein":     "black-forest-labs/FLUX.2-klein-base-9B",
-}
 
 # ── App ──────────────────────────────────────────────────────────────────────
 app = FastAPI(title="Open Fantasia", version="2.0")
@@ -89,7 +87,13 @@ def warmup_model():
         with torch.no_grad():
             gen = torch.Generator(device=_device).manual_seed(0)
             is_flux = hasattr(_pipe, "transformer")
-            kwargs = dict(prompt="warmup", height=256, width=256, num_inference_steps=1, generator=gen)
+            kwargs = dict(
+                prompt="warmup",
+                height=256,
+                width=256,
+                num_inference_steps=1,
+                generator=gen,
+            )
             if not is_flux:
                 kwargs["guidance_scale"] = 1.0
             _pipe(**kwargs)
@@ -154,6 +158,7 @@ def _load_edit():
     """Load QwenImageEditPipeline from 2511 cache (full BF16, CPU offload for 16GB VRAM)."""
     global _edit_pipe
     from diffusers import QwenImageEditPipeline
+
     logger.info(f"Loading QwenImageEditPipeline from {_EDIT_PIPE_MODEL_ID}...")
     _edit_pipe = QwenImageEditPipeline.from_pretrained(
         _EDIT_PIPE_MODEL_ID,
@@ -174,10 +179,18 @@ class GenerateRequest(BaseModel):
     guidance: float = 7.5
     seed: int = 42
     enhance: bool = True
-    count: int = Field(default=1, ge=1, le=4, description="Number of images to generate (1-4)")
-    quant: str = Field(default="autoquant", pattern="^(none|autoquant|int4)$",
-                       description="Quantization mode: none | autoquant | int4")
-    model: Optional[str] = Field(default=None, description="Model alias or full HF ID; None = use startup default")
+    count: int = Field(
+        default=1, ge=1, le=4, description="Number of images to generate (1-4)"
+    )
+    quant: str = Field(
+        default="autoquant",
+        pattern="^(none|autoquant|int4)$",
+        description="Quantization mode: none | autoquant | int4",
+    )
+    model: Optional[str] = Field(
+        default=None,
+        description="Model alias or full HF ID; None = use startup default",
+    )
 
 
 @app.post("/generate")
@@ -187,7 +200,10 @@ def generate(req: GenerateRequest):
     # Return 503 immediately if another generation is in progress
     acquired = _generate_lock.acquire(blocking=False)
     if not acquired:
-        raise HTTPException(status_code=503, detail="Server busy — another generation is in progress. Try again shortly.")
+        raise HTTPException(
+            status_code=503,
+            detail="Server busy — another generation is in progress. Try again shortly.",
+        )
 
     try:
         return _do_generate(req)
@@ -205,7 +221,9 @@ def _do_generate(req: GenerateRequest):
     requested_id = _resolve_model_alias(req.model) if req.model else _model_id
 
     if requested_id is None:
-        raise HTTPException(status_code=503, detail="Model not configured — restart server with --model")
+        raise HTTPException(
+            status_code=503, detail="Model not configured — restart server with --model"
+        )
 
     # Hot-swap if different model requested
     if _pipe is not None and requested_id != _model_id:
@@ -234,7 +252,7 @@ def _do_generate(req: GenerateRequest):
     if req.enhance:
         prompt = enhance_prompt(prompt)
 
-    print(f"Generating [{req.quality}] {w}x{h} @ {s} steps x{req.count} — \"{prompt}\"")
+    print(f'Generating [{req.quality}] {w}x{h} @ {s} steps x{req.count} — "{prompt}"')
 
     is_flux = hasattr(_pipe, "transformer")
 
@@ -264,9 +282,14 @@ def _do_generate(req: GenerateRequest):
     # Return last image as PNG (all are saved to disk)
     buf = io.BytesIO()
     from PIL import Image as PILImage
+
     PILImage.open(paths[-1]).save(buf, format="PNG")
     buf.seek(0)
-    return Response(content=buf.read(), media_type="image/png", headers={"X-Saved-Paths": ",".join(paths)})
+    return Response(
+        content=buf.read(),
+        media_type="image/png",
+        headers={"X-Saved-Paths": ",".join(paths)},
+    )
 
 
 @app.get("/health")
@@ -324,65 +347,8 @@ async def edit_image(req: EditRequest):
     """
     raise HTTPException(
         status_code=503,
-        detail="Image edit endpoint is disabled. Qwen Image Edit model is too resource-intensive for this system."
+        detail="Image edit endpoint is disabled. Qwen Image Edit model is too resource-intensive for this system.",
     )
-
-    # --- DISABLED CODE BELOW ---
-    global _edit_pipe
-
-    try:
-        safe_path = req.safe_image_path
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    if not os.path.exists(safe_path):
-        raise HTTPException(status_code=400, detail=f"Image not found: {safe_path}")
-
-    # Swap out other models to free VRAM
-    _unload_flux()
-    _unload_vl()
-
-    if _edit_pipe is None:
-        _load_edit()
-
-    try:
-        from PIL import Image as PILImage
-        import datetime
-
-        pil_image = PILImage.open(safe_path).convert("RGB")
-
-        out_dir = os.path.expanduser("~/.openclaw/media/fantasia")
-        os.makedirs(out_dir, exist_ok=True)
-        paths = []
-
-        with torch.inference_mode():
-            result = _edit_pipe(
-                image=pil_image,
-                prompt=req.prompt,
-                negative_prompt=req.negative_prompt,
-                num_inference_steps=req.steps,
-                true_cfg_scale=req.true_cfg_scale,
-                generator=torch.manual_seed(req.seed),
-            )
-
-        for i, img in enumerate(result.images):
-            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            path = os.path.join(out_dir, f"{ts}_{i}_edit.png")
-            img.save(path)
-            paths.append(path)
-
-        buf = io.BytesIO()
-        result.images[0].save(buf, format="PNG")
-        buf.seek(0)
-        return Response(
-            content=buf.read(),
-            media_type="image/png",
-            headers={"X-Saved-Paths": ",".join(paths)},
-        )
-
-    except Exception as e:
-        logger.exception("Edit inference failed")
-        raise HTTPException(status_code=500, detail=f"Edit inference failed: {e}")
 
 
 if __name__ == "__main__":
@@ -402,6 +368,9 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    load_model(args.model, quant=args.quant)
-    warmup_model()
+    # Store the configured model as default — loaded lazily on first /generate request
+    global _model_id, _quant_mode
+    _model_id = args.model
+    _quant_mode = args.quant
+    print(f"[fantasia] Lazy mode: model '{_model_id}' will load on first /generate request.")
     uvicorn.run(app, host=args.host, port=args.port)
