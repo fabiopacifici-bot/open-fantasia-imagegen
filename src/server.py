@@ -369,8 +369,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Store the configured model as default — loaded lazily on first /generate request
-    global _model_id, _quant_mode
-    _model_id = args.model
-    _quant_mode = args.quant
-    print(f"[fantasia] Lazy mode: model '{_model_id}' will load on first /generate request.")
+    # These are module-level globals, assigned directly (no global declaration needed here)
+    import sys as _sys
+    _mod = _sys.modules[__name__]
+    _mod._model_id = args.model
+    _mod._quant_mode = args.quant
+    print(f"[fantasia] Lazy mode: model '{args.model}' will load on first /generate request.")
     uvicorn.run(app, host=args.host, port=args.port)
