@@ -30,6 +30,7 @@ import argparse
 import threading
 import datetime
 
+import psutil
 import torch
 import uvicorn
 from fastapi import FastAPI, HTTPException
@@ -58,6 +59,23 @@ _quant_mode = "none"
 
 # Generation lock — prevents concurrent requests from stacking (returns 503 if busy)
 _generate_lock = threading.Lock()
+
+# ── System RAM guard ─────────────────────────────────────────────────────────
+# Reject a generation when free system RAM (plus estimated headroom) would drop
+# below this threshold. Stops model/page-cache spill from starving the OS.
+MIN_FREE_RAM_GB = float(os.environ.get("FANTASIA_MIN_FREE_RAM_GB", "4"))
+
+# Hard caps on a single generation request — guard against accidental OOM from
+# huge resolutions / step counts / batch sizes.
+MAX_WIDTH = int(os.environ.get("FANTASIA_MAX_WIDTH", "1024"))
+MAX_HEIGHT = int(os.environ.get("FANTASIA_MAX_HEIGHT", "1024"))
+MAX_STEPS = int(os.environ.get("FANTASIA_MAX_STEPS", "20"))
+MAX_COUNT = int(os.environ.get("FANTASIA_MAX_COUNT", "4"))
+
+# Enable pipeline CPU offload so activations stay on the GPU instead of spilling
+# into system RAM during generation. Off by default (small perf cost) — set to 1
+# to turn on if your system still runs low on RAM.
+ENABLE_CPU_OFFLOAD = os.environ.get("FANTASIA_CPU_OFFLOAD", "0") == "1"
 
 # Qwen2.5-VL model — loaded lazily on first /vl call
 _vl_model = None
@@ -154,6 +172,45 @@ def _resolve_model_alias(model_str: str) -> str:
     return MODEL_ALIASES.get(model_str, model_str)
 
 
+def _free_ram_gb() -> float:
+    """Return available system RAM in GB (psutil.available — includes reclaimable cache)."""
+    try:
+        return psutil.virtual_memory().available / (1024 ** 3)
+    except Exception:
+        # Fallback: don't block generation if psutil is unavailable
+        return float("inf")
+
+
+def _check_ram_guard() -> None:
+    """Raise HTTP 503 if free system RAM would drop below the safety floor."""
+    free = _free_ram_gb()
+    if free < MIN_FREE_RAM_GB:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"System RAM too low to generate safely ({free:.1f} GB free, "
+                f"need >= {MIN_FREE_RAM_GB:.1f} GB). Free up memory and retry."
+            ),
+        )
+
+
+def _enable_offload(pipe) -> None:
+    """Best-effort CPU offload for pipelines that support it, to stop RAM spill."""
+    if not ENABLE_CPU_OFFLOAD:
+        return
+    try:
+        if hasattr(pipe, "enable_model_cpu_offload"):
+            pipe.enable_model_cpu_offload()
+            logger.info("CPU offload enabled on pipeline")
+        elif hasattr(pipe, "enable_sequential_cpu_offload"):
+            pipe.enable_sequential_cpu_offload()
+            logger.info("Sequential CPU offload enabled on pipeline")
+        if hasattr(pipe, "enable_attention_slicing"):
+            pipe.enable_attention_slicing()
+    except Exception as e:
+        logger.warning(f"Could not enable CPU offload: {e}")
+
+
 def _load_edit():
     """Load QwenImageEditPipeline from 2511 cache (full BF16, CPU offload for 16GB VRAM)."""
     global _edit_pipe
@@ -214,6 +271,26 @@ def generate(req: GenerateRequest):
 def _do_generate(req: GenerateRequest):
     global _pipe
 
+    # Reject early if the system is running low on free RAM
+    _check_ram_guard()
+
+    # Enforce hard caps on a single generation
+    if (req.width or 512) > MAX_WIDTH or (req.height or 512) > MAX_HEIGHT:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Resolution too large (max {MAX_WIDTH}x{MAX_HEIGHT}px).",
+        )
+    if (req.steps or 4) > MAX_STEPS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many inference steps (max {MAX_STEPS}).",
+        )
+    if req.count > MAX_COUNT:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many images per request (max {MAX_COUNT}).",
+        )
+
     # Swap out Qwen models if loaded
     _unload_vl()
 
@@ -233,6 +310,7 @@ def _do_generate(req: GenerateRequest):
     # Load if not loaded (initial load or after swap)
     if _pipe is None:
         load_model(requested_id, quant=_quant_mode)
+        _enable_offload(_pipe)
 
     # If quant in request differs from loaded model, warn (can't hot-swap)
     if req.quant != _quant_mode:
