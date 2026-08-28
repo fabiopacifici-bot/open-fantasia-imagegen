@@ -1,6 +1,7 @@
-# 🪄 Open Fantasia — Local Image Generation
+# 🪄 Open Fantasia — Local Image & Video Generation
 
-Generate images locally on your GPU using FLUX.1-schnell or Stable Diffusion — no external API, no cost per image.
+Generate images locally on your GPU using FLUX.1-schnell or Stable Diffusion, and short
+videos with Wan2.1 — no external API, no cost per image or clip.
 
 [![Hippocratic License HL3-LAW-MIL-SV](https://img.shields.io/static/v1?label=Hippocratic%20License&message=HL3-LAW-MIL-SV&labelColor=5e2751&color=bc8c3d)](https://firstdonoharm.dev/version/3/0/law-mil-sv.html)
 
@@ -27,9 +28,38 @@ Generate images locally on your GPU using FLUX.1-schnell or Stable Diffusion —
 - 🌸 **FLUX.2-klein** — lighter experimental model
 - 🎨 **Stable Diffusion 1.5** — classic fallback, runs on 6GB VRAM
 - ⚡ **SD-Turbo** — near-instant generation (~1-3s at 512×512)
+- 🎬 **Wan2.1 text-to-video** — short MP4 clips from text (~8GB VRAM)
 - 🔢 **Batch generation** — generate 1–4 images per prompt (different seeds)
 - 💬 **OpenClaw slash command** — `/fantasia <prompt>` with inline buttons
 - 🔁 **Persistent server** — model stays in VRAM, near-instant after first load
+
+---
+
+## Video Generation (Wan2.1)
+
+Generate a short MP4 clip from a text prompt using `Wan-AI/Wan2.1-T2V-1.3B`
+(~8.19 GB VRAM, 480P, ~4 min for a 5s clip on an RTX 4090):
+
+```bash
+curl -X POST http://localhost:8765/video \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"a cat walking through a neon city at night","quality":"mid"}'
+```
+
+Returns raw `video/mp4` bytes. Saved to `~/.openclaw/media/fantasia/videos/<timestamp>.mp4`.
+
+| Field | Default | Notes |
+|-------|---------|-------|
+| `quality` | `mid` | `low` (480×480, 49f, 20 steps) · `mid` (480×832, 81f, 30 steps) · `high` (480×832, 81f, 50 steps) |
+| `steps` | 30 | Inference steps |
+| `num_frames` | 81 | 16 fps → 81 ≈ 5s |
+| `guidance_scale` | 6.0 | Wan recommends 6.0 |
+| `seed` | 42 | Reproducibility |
+
+**Model aliases:** `wan`, `wan13`, `wan2.1`, `wan-1.3b` → `Wan-AI/Wan2.1-T2V-1.3B`
+
+> **VRAM note:** The server auto-unloads the image/Qwen pipelines before loading Wan2.1
+to free VRAM, and reloads them on the next image request.
 
 ---
 

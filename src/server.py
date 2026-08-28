@@ -45,6 +45,12 @@ from imagegen import (
     QUALITY_PRESETS,
     MODEL_ALIASES,
 )
+from videogen import (
+    get_video_pipeline,
+    resolve_video_size,
+    VIDEO_QUALITY_PRESETS,
+    VIDEO_MODEL_ALIASES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +77,10 @@ MAX_WIDTH = int(os.environ.get("FANTASIA_MAX_WIDTH", "1024"))
 MAX_HEIGHT = int(os.environ.get("FANTASIA_MAX_HEIGHT", "1024"))
 MAX_STEPS = int(os.environ.get("FANTASIA_MAX_STEPS", "20"))
 MAX_COUNT = int(os.environ.get("FANTASIA_MAX_COUNT", "4"))
+# Video uses more steps than images (Wan2.1 recommends ~30); separate cap so the
+# image cap of 20 doesn't block video defaults.
+MAX_VIDEO_STEPS = int(os.environ.get("FANTASIA_MAX_VIDEO_STEPS", "60"))
+MAX_VIDEO_FRAMES = int(os.environ.get("FANTASIA_MAX_VIDEO_FRAMES", "161"))
 
 # Enable pipeline CPU offload so activations stay on the GPU instead of spilling
 # into system RAM during generation. Off by default (small perf cost) — set to 1
@@ -85,6 +95,11 @@ _EDIT_MODEL_ID = "Qwen/Qwen2.5-VL-7B-Instruct"
 # Qwen Image Edit pipeline — loaded lazily on first /edit call
 _edit_pipe = None
 _EDIT_PIPE_MODEL_ID = "Qwen/Qwen-Image-Edit-2511"
+
+# Wan2.1 text-to-video pipeline — loaded lazily on first /video call
+_video_pipe = None
+_video_device = None
+_VIDEO_MODEL_ID = "Wan-AI/Wan2.1-T2V-1.3B"
 
 
 def load_model(model_id: str, quant: str = "none"):
@@ -153,6 +168,18 @@ def _unload_edit():
         _edit_pipe.to("cpu")
         del _edit_pipe
         _edit_pipe = None
+        torch.cuda.empty_cache()
+        gc.collect()
+
+
+def _unload_video():
+    """Offload Wan2.1 video pipeline from GPU and free VRAM."""
+    global _video_pipe
+    if _video_pipe is not None:
+        logger.info("Unloading Wan2.1 video pipeline")
+        _video_pipe.to("cpu")
+        del _video_pipe
+        _video_pipe = None
         torch.cuda.empty_cache()
         gc.collect()
 
@@ -291,8 +318,9 @@ def _do_generate(req: GenerateRequest):
             detail=f"Too many images per request (max {MAX_COUNT}).",
         )
 
-    # Swap out Qwen models if loaded
+    # Swap out Qwen + video models if loaded
     _unload_vl()
+    _unload_video()
 
     # Resolve requested model (alias or full ID)
     requested_id = _resolve_model_alias(req.model) if req.model else _model_id
@@ -379,6 +407,8 @@ def health():
         active = "qwen-vl"
     elif _edit_pipe is not None:
         active = "qwen-edit"
+    elif _video_pipe is not None:
+        active = "wan-video"
     busy = not _generate_lock.acquire(blocking=False)
     if not busy:
         _generate_lock.release()
@@ -387,6 +417,7 @@ def health():
         "flux_loaded": _pipe is not None,
         "vl_loaded": _vl_model is not None,
         "edit_loaded": _edit_pipe is not None,
+        "video_loaded": _video_pipe is not None,
         "model": _model_id,
         "device": _device or "cuda",
         "status": "busy" if busy else "ready",
@@ -426,6 +457,107 @@ async def edit_image(req: EditRequest):
     raise HTTPException(
         status_code=503,
         detail="Image edit endpoint is disabled. Qwen Image Edit model is too resource-intensive for this system.",
+    )
+
+
+# ── Video endpoint — Wan2.1 text-to-video ────────────────────────────────────
+class VideoRequest(BaseModel):
+    prompt: str = Field(description="Text description of the video to generate")
+    quality: str = Field(default="mid", description="low | mid | high")
+    width: int | None = None
+    height: int | None = None
+    steps: int | None = None
+    num_frames: int | None = Field(
+        default=None, ge=1, le=161, description="Number of frames (16 fps; 81 ≈ 5s)"
+    )
+    guidance_scale: float = Field(default=6.0, ge=1.0, le=12.0)
+    negative_prompt: str = Field(default="", description="Negative prompt")
+    seed: int = Field(default=42)
+    enhance: bool = False
+    model: Optional[str] = Field(
+        default=None,
+        description="Wan model alias or full HF ID; None = Wan2.1-T2V-1.3B",
+    )
+
+
+@app.post("/video")
+def generate_video(req: VideoRequest):
+    global _video_pipe, _video_device
+
+    # Reject early if the system is running low on free RAM
+    _check_ram_guard()
+
+    # Enforce hard caps on a single generation
+    if (req.width or 480) > MAX_WIDTH or (req.height or 480) > MAX_HEIGHT:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Resolution too large (max {MAX_WIDTH}x{MAX_HEIGHT}px).",
+        )
+    if (req.steps or 30) > MAX_VIDEO_STEPS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many inference steps (max {MAX_VIDEO_STEPS}).",
+        )
+    if (req.num_frames or 81) > MAX_VIDEO_FRAMES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many frames (max {MAX_VIDEO_FRAMES}).",
+        )
+
+    # Video generation is heavy — free VRAM from image/Qwen models first
+    _unload_flux()
+    _unload_vl()
+    _unload_edit()
+
+    requested_id = VIDEO_MODEL_ALIASES.get(req.model, req.model) if req.model else _VIDEO_MODEL_ID
+
+    if _video_pipe is None:
+        logger.info(f"Loading Wan2.1 video pipeline: {requested_id}")
+        _video_pipe, _video_device = get_video_pipeline(requested_id)
+
+    w, h, nf, s = resolve_video_size(
+        quality=req.quality,
+        width=req.width,
+        height=req.height,
+        steps=req.steps,
+        num_frames=req.num_frames,
+    )
+
+    print(f'Generating video [{req.quality}] {w}x{h} {nf}f @ {s} steps — "{req.prompt}"')
+
+    out_dir = os.path.expanduser("~/.openclaw/media/fantasia/videos")
+    os.makedirs(out_dir, exist_ok=True)
+    import datetime
+
+    filename = f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
+    path = os.path.join(out_dir, filename)
+
+    from videogen import generate_video as _run_video
+
+    _run_video(
+        prompt=req.prompt,
+        output=path,
+        model_id=requested_id,
+        quality=req.quality,
+        height=h,
+        width=w,
+        steps=s,
+        num_frames=nf,
+        seed=req.seed,
+        negative_prompt=req.negative_prompt,
+        guidance_scale=req.guidance_scale,
+        enhance=req.enhance,
+        pipe=_video_pipe,
+        device=_video_device,
+    )
+
+    # Return the MP4 bytes
+    with open(path, "rb") as f:
+        content = f.read()
+    return Response(
+        content=content,
+        media_type="video/mp4",
+        headers={"X-Saved-Paths": path},
     )
 
 

@@ -1,21 +1,22 @@
 ---
 name: open-fantasia-imagegen
-description: Local image generation with FLUX or Stable Diffusion. Generate images from text prompts on your GPU.
+description: Local image AND video generation with FLUX, Stable Diffusion, and Wan2.1. Generate images or short videos from text prompts on your GPU.
 metadata:
-  version: 1.3.0
+  version: 1.4.0
   commands:
     - /fantasia
 ---
 
-# Open Fantasia — Image Generation Skill
+# Open Fantasia — Image & Video Generation Skill
 
 ## Slash Command
 `/fantasia <prompt> [--quality low|mid|high] [--model schnell|klein|sd15|turbo] [--count 1-4] [--raw|--enhance]`
 
 ## Description
-Generate images locally on GPU using the persistent Open Fantasia inference server.
-Model stays loaded in VRAM — near-instant generation after first startup.
-Default model: **FLUX.1-schnell BF16** (~16GB VRAM, ~33GB disk).
+Generate images and short videos locally on GPU using the persistent Open Fantasia inference server.
+Models stay loaded in VRAM — near-instant generation after first startup.
+- Default image model: **FLUX.1-schnell BF16** (~16GB VRAM, ~33GB disk).
+- Default video model: **Wan-AI/Wan2.1-T2V-1.3B** (~8.19GB VRAM, 480P, ~4min/5s clip on an RTX 4090).
 
 ## First-Time Setup
 ```bash
@@ -24,6 +25,40 @@ cp .env.example .env   # add your HF_TOKEN
 bash setup.sh
 ```
 This installs dependencies, downloads the recommended model, and starts the server as a systemd service.
+
+---
+
+## Video Generation (`POST /video`)
+
+Generate a short MP4 clip from a text prompt using Wan2.1:
+
+```json
+POST http://localhost:8765/video
+{
+  "prompt": "a cat walking through a neon city at night",
+  "quality": "mid",        // low | mid | high
+  "steps": 30,
+  "num_frames": 81,        // 16fps; 81 ≈ 5s
+  "guidance_scale": 6.0,
+  "seed": 42,
+  "enhance": false,
+  "model": null            // null = Wan-AI/Wan2.1-T2V-1.3B
+}
+```
+
+**Response:** raw `video/mp4` bytes with `X-Saved-Paths` header.
+Saved to `~/.openclaw/media/fantasia/videos/<timestamp>.mp4`.
+
+| Field | Default | Notes |
+|-------|---------|-------|
+| `quality` | `mid` | `low` (480×480, 49f, 20 steps) · `mid` (480×832, 81f, 30 steps) · `high` (480×832, 81f, 50 steps) |
+| `steps` | 30 | Inference steps (max 20 via env cap) |
+| `num_frames` | 81 | 16 fps → 81 ≈ 5s |
+| `guidance_scale` | 6.0 | Wan recommends 6.0 |
+
+**Model aliases:** `wan`, `wan13`, `wan2.1`, `wan-1.3b` → `Wan-AI/Wan2.1-T2V-1.3B`
+
+**VRAM note:** Video generation is heavy. The server auto-unloads the image/Qwen pipelines before loading Wan2.1 to free VRAM, and re-loads them on the next image request.
 
 ---
 

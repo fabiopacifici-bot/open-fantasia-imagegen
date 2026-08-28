@@ -13,3 +13,5 @@ bitsandbytes
 huggingface_hub
 qwen-vl-utils
 psutil
+imageio
+imageio-ffmpeg
