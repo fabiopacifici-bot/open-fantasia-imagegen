@@ -99,7 +99,7 @@ _EDIT_PIPE_MODEL_ID = "Qwen/Qwen-Image-Edit-2511"
 # Wan2.1 text-to-video pipeline — loaded lazily on first /video call
 _video_pipe = None
 _video_device = None
-_VIDEO_MODEL_ID = "Wan-AI/Wan2.1-T2V-1.3B"
+_VIDEO_MODEL_ID = "Wan-AI/Wan2.1-T2V-1.3B-Diffusers"
 
 
 def load_model(model_id: str, quant: str = "none"):

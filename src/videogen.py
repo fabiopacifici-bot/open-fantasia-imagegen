@@ -20,7 +20,7 @@ except ImportError:
     pass
 
 # ── Model & defaults ─────────────────────────────────────────────────────────
-DEFAULT_VIDEO_MODEL = "Wan-AI/Wan2.1-T2V-1.3B"
+DEFAULT_VIDEO_MODEL = "Wan-AI/Wan2.1-T2V-1.3B-Diffusers"
 
 # Quality presets: (width, height, num_frames, num_inference_steps)
 # Wan2.1 T2V uses 16 fps internally; 81 frames ≈ 5s. 480P is the recommended
@@ -32,10 +32,11 @@ VIDEO_QUALITY_PRESETS = {
 }
 
 VIDEO_MODEL_ALIASES = {
-    "wan":       "Wan-AI/Wan2.1-T2V-1.3B",
-    "wan13":     "Wan-AI/Wan2.1-T2V-1.3B",
-    "wan2.1":    "Wan-AI/Wan2.1-T2V-1.3B",
-    "wan-1.3b":  "Wan-AI/Wan2.1-T2V-1.3B",
+    "wan":           "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+    "wan13":         "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+    "wan2.1":        "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+    "wan-1.3b":      "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+    "wan-diffusers": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
 }
 
 
@@ -185,6 +186,14 @@ def _save_mp4(frames, output: str, fps: int = 16):
     writer = imageio.get_writer(output, fps=fps, codec="libx264", quality=8)
     try:
         for frame in frames:
-            writer.append_data(np.asarray(frame.convert("RGB")))
+            # Wan2.1 returns numpy arrays (H,W,C uint8); PIL images need conversion.
+            if hasattr(frame, "convert"):
+                frame = np.asarray(frame.convert("RGB"))
+            else:
+                frame = np.asarray(frame)
+            if frame.ndim == 3 and frame.shape[-1] == 3:
+                writer.append_data(frame)
+            else:
+                writer.append_data(np.repeat(frame[..., np.newaxis], 3, axis=-1))
     finally:
         writer.close()

@@ -87,5 +87,39 @@ class TestGenerateVideoDryRun(unittest.TestCase):
                 os.unlink(out)
 
 
+class TestSaveMp4(unittest.TestCase):
+    def test_save_mp4_accepts_numpy_arrays(self):
+        """Wan2.1 returns numpy arrays (H,W,C uint8), not PIL images — must encode."""
+        import numpy as np
+        from videogen import _save_mp4
+        import tempfile
+        frames = [np.zeros((16, 16, 3), dtype=np.uint8) for _ in range(3)]
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
+            out = f.name
+        try:
+            _save_mp4(frames, out, fps=16)
+            self.assertTrue(os.path.exists(out))
+            self.assertGreater(os.path.getsize(out), 0)
+        finally:
+            if os.path.exists(out):
+                os.unlink(out)
+
+    def test_save_mp4_accepts_pil_images(self):
+        """PIL images still work (convert path)."""
+        from PIL import Image
+        from videogen import _save_mp4
+        import tempfile
+        frames = [Image.new("RGB", (16, 16)) for _ in range(3)]
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
+            out = f.name
+        try:
+            _save_mp4(frames, out, fps=16)
+            self.assertTrue(os.path.exists(out))
+            self.assertGreater(os.path.getsize(out), 0)
+        finally:
+            if os.path.exists(out):
+                os.unlink(out)
+
+
 if __name__ == "__main__":
     unittest.main()
