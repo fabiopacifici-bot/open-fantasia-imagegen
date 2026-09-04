@@ -49,13 +49,17 @@ def is_gguf(model_id: str) -> bool:
 
 
 def resolve_size(quality=None, width=None, height=None, steps=None):
-    """Resolve dimensions from quality keyword or explicit values."""
+    """Resolve dimensions from quality keyword or explicit values.
+
+    Explicit width/height/steps override the quality preset when provided;
+    otherwise the preset (or 512x512x4 default) is used.
+    """
     if quality:
         q = quality.lower()
         if q not in QUALITY_PRESETS:
             raise ValueError(f"Unknown quality '{q}'. Choose from: {', '.join(QUALITY_PRESETS)}")
         w, h, s = QUALITY_PRESETS[q]
-        return w, h, steps if steps is not None else s
+        return width or w, height or h, steps if steps is not None else s
     return width or 512, height or 512, steps or 4
 
 
