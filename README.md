@@ -21,6 +21,25 @@ videos with Wan2.1 — no external API, no cost per image or clip.
 
 ---
 
+## Video Gallery
+
+Short clips generated locally with **Wan2.1** (Wan-AI/Wan2.1-T2V-1.3B, `mid` quality):
+
+| Prompt | Result |
+|--------|--------|
+| `a horse standing on a rocky beach at sunset` | <video src="assets/videos/demo-horse-beach-sunset.mp4" controls width="320"></video> |
+| `a black cat walking along the shoreline in backlight` | <video src="assets/videos/demo-cat-shoreline-backlit.mp4" controls width="320"></video> |
+| `a black cat standing in shallow surf, yellow-green eyes` | <video src="assets/videos/demo-cat-shallow-surf.mp4" controls width="320"></video> |
+| `a glowing blue whale shark swimming in dark water` | <video src="assets/videos/demo-blue-whale-shark.mp4" controls width="320"></video> |
+| `a neon sign glowing pink-purple at night` | <video src="assets/videos/demo-neon-sign.mp4" controls width="320"></video> |
+| `a golden light streak flowing on a dark navy background` | <video src="assets/videos/demo-golden-light-streak.mp4" controls width="320"></video> |
+| `a flowing gold ribbon on a dark background` | <video src="assets/videos/demo-gold-ribbon.mp4" controls width="320"></video> |
+| `a small camera robot sitting among lush green plants` | <video src="assets/videos/demo-camera-robot.mp4" controls width="320"></video> |
+
+*Generated locally with Wan2.1, `mid` quality preset. ~5s clips at 480P.*
+
+---
+
 ## Features
 
 - 🚀 **Local generation** — no API keys, no cloud, no per-image cost
