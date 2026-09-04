@@ -17,6 +17,8 @@ import sys
 import unittest
 from unittest.mock import patch
 
+from PIL import Image as PILImage
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import server
@@ -30,16 +32,19 @@ def make_fake_image():
     return img
 
 
-def make_fake_pipe():
+class FakePipe:
     """A fake SD-style pipeline (no .transformer attr) yielding one image."""
-    pipe = type("FakePipe", (), {})()
-    pipe.images = {"single": [make_fake_image()]}
 
-    def _call(**kwargs):
+    def __init__(self):
+        self.images = {"single": [make_fake_image()]}
+
+    def __call__(self, **kwargs):
         return type("Res", (), {"images": [make_fake_image()]})()
 
-    pipe.__call__ = _call
-    return pipe
+
+def make_fake_pipe():
+    """Return a callable fake SD-style pipeline (no .transformer attr)."""
+    return FakePipe()
 
 
 class TestServerGenerateEndpoint(unittest.TestCase):
@@ -58,11 +63,11 @@ class TestServerGenerateEndpoint(unittest.TestCase):
 
     def test_generate_returns_png_on_success(self):
         server._pipe = make_fake_pipe()
+        # The server imports PIL locally inside _do_generate, so patch the real
+        # PIL.Image.open to return a fake image (no real file is written).
         with patch.object(server, "_check_ram_guard"), \
              patch.object(server, "enhance_prompt", side_effect=lambda p: p), \
-             patch.object(server, "PILImage", create=True) as mock_pil:
-            mock_pil.open = lambda path: make_fake_image()
-
+             patch.object(PILImage, "open", return_value=make_fake_image()):
             resp = self._run_generate(enhance=False)
 
         self.assertEqual(resp.status_code, 200)
@@ -84,8 +89,14 @@ class TestServerGenerateEndpoint(unittest.TestCase):
         """resolve_size raises ValueError for unknown quality -> unhandled 500."""
         server._pipe = make_fake_pipe()
         # Disable the ram guard so the only failure is the bad quality value.
+        # raise_server_exceptions=False lets the unhandled ValueError surface as
+        # a real 500 response instead of being re-raised by the TestClient.
         with patch.object(server, "_check_ram_guard"):
-            resp = self._run_generate(quality="ultra", enhance=False)
+            with TestClient(server.app, raise_server_exceptions=False) as client:
+                resp = client.post(
+                    "/generate",
+                    json={"prompt": "a cat", "quality": "ultra", "enhance": False},
+                )
         self.assertEqual(resp.status_code, 500)
 
     def test_generate_rejects_oversized_resolution(self):
@@ -183,12 +194,16 @@ class TestHotSwap(unittest.TestCase):
         server._pipe = make_fake_pipe()
         server._model_id = "model-a"
 
-        with patch.object(server, "_unload_flux_for_swap") as mock_unload, \
-             patch.object(server, "load_model") as mock_load, \
+        with patch.object(server, "_unload_flux_for_swap",
+                          side_effect=lambda: setattr(server, "_pipe", None)) as mock_unload, \
+             patch.object(server, "load_model",
+                          side_effect=lambda model_id, *a, **k: (
+                              setattr(server, "_pipe", make_fake_pipe()),
+                              setattr(server, "_model_id", model_id),
+                          )) as mock_load, \
              patch.object(server, "_check_ram_guard"), \
              patch.object(server, "enhance_prompt", side_effect=lambda p: p), \
-             patch.object(server, "PILImage", create=True) as mock_pil:
-            mock_pil.open = lambda path: make_fake_image()
+             patch.object(PILImage, "open", return_value=make_fake_image()):
             with TestClient(server.app) as client:
                 resp = client.post("/generate", json={
                     "prompt": "a cat", "model": "model-b", "enhance": False,
@@ -208,8 +223,7 @@ class TestHotSwap(unittest.TestCase):
              patch.object(server, "load_model") as mock_load, \
              patch.object(server, "_check_ram_guard"), \
              patch.object(server, "enhance_prompt", side_effect=lambda p: p), \
-             patch.object(server, "PILImage", create=True) as mock_pil:
-            mock_pil.open = lambda path: make_fake_image()
+             patch.object(PILImage, "open", return_value=make_fake_image()):
             with TestClient(server.app) as client:
                 resp = client.post("/generate", json={
                     "prompt": "a cat", "model": "model-a", "enhance": False,
