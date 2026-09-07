@@ -4,7 +4,7 @@
 #   bash install.sh [--yes] [--no-server] [--no-skill]
 #
 # Does three things:
-#   1. Creates a venv, installs requirements, and (optionally) starts the
+#   1. Reuses setup.sh to create the venv, install dependencies, and start the
 #      Fantasia server on :8765.
 #   2. Discovers OpenClaw and kernel-evolving skill workspaces.
 #   3. Installs the skills/fantasia skill into each discovered workspace
@@ -15,8 +15,6 @@
 set -euo pipefail
 
 REPO_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-VENV="$REPO_DIR/.venv"
-MEDIA_DIR="$HOME/.fantasia/media"
 SKILL_SRC="$REPO_DIR/skills/fantasia"
 
 ASSUME_YES=false
@@ -44,47 +42,10 @@ confirm() {
 echo "🪄 Open Fantasia Installer"
 echo "=========================="
 
-# ── 1. Dependencies + server ────────────────────────────────────────────────
+# ── 1. Dependencies + server — delegate to setup.sh (single source of truth) ──
 if [[ "$START_SERVER" == true ]]; then
-  echo "📦 Setting up virtual environment..."
-  if [[ ! -d "$VENV" ]]; then
-    python3 -m venv "$VENV"
-  fi
-  "$VENV/bin/pip" install -q --upgrade pip
-  "$VENV/bin/pip" install -q -r "$REPO_DIR/requirements.txt"
-  mkdir -p "$MEDIA_DIR"
-
-  if command -v systemctl >/dev/null 2>&1 && systemctl --user >/dev/null 2>&1; then
-    echo "🔧 Installing systemd user service..."
-    SERVICE_FILE="$HOME/.config/systemd/user/fantasia.service"
-    mkdir -p "$(dirname "$SERVICE_FILE")"
-    cat > "$SERVICE_FILE" <<SVCEOF
-[Unit]
-Description=Open Fantasia Image Generation Server
-After=network.target
-
-[Service]
-Type=simple
-WorkingDirectory=$REPO_DIR
-ExecStart=$VENV/bin/python server/server.py --model black-forest-labs/FLUX.1-schnell
-Restart=on-failure
-RestartSec=5
-Environment=HF_TOKEN=\${HF_TOKEN:-}
-
-[Install]
-WantedBy=default.target
-SVCEOF
-    systemctl --user daemon-reload
-    systemctl --user enable fantasia.service
-    systemctl --user restart fantasia.service
-  else
-    echo "⚠️  systemd not available — starting server in background instead."
-    nohup "$VENV/bin/python" server/server.py --model black-forest-labs/FLUX.1-schnell \
-      > /tmp/fantasia_server.log 2>&1 &
-    echo "   Server PID $! — log: /tmp/fantasia_server.log"
-  fi
-
-  echo "✅ Server installed. Health: curl http://localhost:8765/health"
+  echo "📦 Running setup.sh (venv, deps, server)..."
+  bash "$REPO_DIR/setup.sh"
 fi
 
 # ── 2. Discover agent workspaces ────────────────────────────────────────────
