@@ -22,15 +22,87 @@ Generate images and short videos locally on GPU using the persistent Open Fantas
 
 ## CLI (preferred)
 
-The repo ships a dependency-free CLI at `{baseDir}/../../fantasia.py` (or the repo root `fantasia.py`). Prefer it over raw curl — it returns JSON and handles the server URL:
+The `fantasia` command runs like any terminal command from anywhere — `fantasia image ..`, `fantasia video ..` — once it is on PATH.
+
+### Ensure the global `fantasia` command
+
+Check if it is available; if not, link it globally so it runs from any directory:
 
 ```bash
-python3 fantasia.py image  --prompt "a robot cat" --quality low --count 2
-python3 fantasia.py video  --prompt "a robot cat walking" --quality mid --seconds 5
-python3 fantasia.py health
-python3 fantasia.py models
-python3 fantasia.py setup
+command -v fantasia >/dev/null 2>&1 && echo "fantasia: available" || {
+  chmod +x "{baseDir}/../../fantasia.py"
+  mkdir -p "$HOME/.local/bin"
+  ln -sf "{baseDir}/../../fantasia.py" "$HOME/.local/bin/fantasia"
+  export PATH="$HOME/.local/bin:$PATH"
+  echo "fantasia: installed globally -> $HOME/.local/bin/fantasia"
+}
 ```
+
+> `install.sh` / `install.ps1` do this automatically. The snippet above is the fallback for an already-cloned repo where the CLI was never linked.
+
+Then use it from anywhere:
+
+```bash
+fantasia health
+fantasia image --prompt "a robot cat" --quality low
+fantasia video --prompt "a robot cat walking" --quality mid --seconds 5
+```
+
+Prefer the CLI over raw curl — it returns JSON and handles the server URL.
+
+### Subcommands
+
+| Command | Purpose |
+|---------|---------|
+| `fantasia image --prompt "..." [opts]` | Generate 1–4 images |
+| `fantasia video --prompt "..." [opts]` | Generate one short MP4 clip |
+| `fantasia health` | Server status (ready/busy, loaded models) |
+| `fantasia models` | List available model aliases |
+| `fantasia setup` | Run the setup script (deps + server) |
+
+### `fantasia image` options
+
+| Option | Default | Notes |
+|--------|---------|-------|
+| `--prompt "..."` | *(required)* | Text description |
+| `--quality low\|mid\|high` | `low` | Resolution/step preset |
+| `--model <alias>` | server default | e.g. `schnell`, `klein`, `sd15`, `turbo` |
+| `--count 1-4` | `1` | Number of images (different seeds) |
+| `--seed N` | `42` | Seed for reproducibility |
+| `--raw` | off | Disable prompt enhancement |
+| `--base-url URL` | `http://127.0.0.1:8765` | Override server address |
+
+### `fantasia video` options
+
+| Option | Default | Notes |
+|--------|---------|-------|
+| `--prompt "..."` | *(required)* | Text description |
+| `--quality low\|mid\|high` | `mid` | Wan2.1 preset |
+| `--model <alias>` | `wan` | e.g. `wan`, `wan2.1`, `wan-1.3b` |
+| `--seconds N` | `5` | Clip length (16 fps → frames) |
+| `--seed N` | `42` | Seed for reproducibility |
+| `--raw` | off | Disable prompt enhancement |
+
+### Examples
+
+```bash
+# One image, low quality
+fantasia image --prompt "a samurai cat at sunset" --quality low
+
+# Three variations
+fantasia image --prompt "a dragon" --count 3 --quality mid
+
+# Fast turbo model, no enhancement
+fantasia image --prompt "quick sketch of a robot" --model turbo --raw
+
+# 5-second video
+fantasia video --prompt "a robot cat walking in the colosseum" --quality mid --seconds 5
+
+# Check the server
+fantasia health
+```
+
+Output images are saved to `~/.fantasia/media/` and videos to `~/.fantasia/media/videos/`; the CLI prints the saved paths as JSON.
 
 ## First-Time Setup
 

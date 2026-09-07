@@ -20,11 +20,13 @@ SKILL_SRC="$REPO_DIR/skills/fantasia"
 ASSUME_YES=false
 START_SERVER=true
 INSTALL_SKILL=true
+INSTALL_CLI=true
 for arg in "$@"; do
   case "$arg" in
     --yes) ASSUME_YES=true ;;
     --no-server) START_SERVER=false ;;
     --no-skill) INSTALL_SKILL=false ;;
+    --no-cli) INSTALL_CLI=false ;;
     *) echo "Unknown option: $arg" >&2; exit 1 ;;
   esac
 done
@@ -46,6 +48,20 @@ echo "=========================="
 if [[ "$START_SERVER" == true ]]; then
   echo "📦 Running setup.sh (venv, deps, server)..."
   bash "$REPO_DIR/setup.sh"
+fi
+
+# ── 1b. Global CLI on PATH — run `fantasia image ..` from anywhere ────────────
+if [[ "$INSTALL_CLI" == true ]]; then
+  echo "🔗 Installing global 'fantasia' command..."
+  chmod +x "$REPO_DIR/fantasia.py"
+  BIN_DIR="$HOME/.local/bin"
+  mkdir -p "$BIN_DIR"
+  ln -sf "$REPO_DIR/fantasia.py" "$BIN_DIR/fantasia"
+  if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
+    echo "   ⚠️  $BIN_DIR is not on your PATH."
+    echo "       Add it with:  export PATH=\"$BIN_DIR:\$PATH\""
+  fi
+  echo "   ✅ Try: fantasia health"
 fi
 
 # ── 2. Discover agent workspaces ────────────────────────────────────────────

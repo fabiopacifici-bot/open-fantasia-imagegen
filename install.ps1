@@ -1,10 +1,11 @@
 # Open Fantasia — Windows (PowerShell) install script.
 #
-#   powershell -ExecutionPolicy Bypass -File install.ps1 [-Yes] [-NoServer] [-NoSkill]
+#   powershell -ExecutionPolicy Bypass -File install.ps1 [-Yes] [-NoServer] [-NoSkill] [-NoCli]
 #
-# Does three things:
+# Does four things:
 #   1. Creates a venv, installs requirements, and (optionally) starts the
 #      Fantasia server on :8765.
+#   1b. Installs the global `fantasia` command on PATH.
 #   2. Discovers OpenClaw and kernel-evolving skill workspaces.
 #   3. Installs the skills/fantasia skill into each discovered workspace
 #      AFTER explicit user approval (unless -Yes).
@@ -14,7 +15,8 @@
 param(
     [switch]$Yes,
     [switch]$NoServer,
-    [switch]$NoSkill
+    [switch]$NoSkill,
+    [switch]$NoCli
 )
 
 $ErrorActionPreference = "Stop"
@@ -52,6 +54,20 @@ if (-not $NoServer) {
         -RedirectStandardOutput $LogFile -RedirectStandardError $LogFile -WindowStyle Hidden
     Write-Host "   Log: $LogFile"
     Write-Host "   Health: curl http://localhost:8765/health"
+}
+
+# ── 1b. Global CLI on PATH — run `fantasia image ..` from anywhere ─────────
+if (-not $NoCli) {
+    Write-Host "🔗 Installing global 'fantasia' command..."
+    $CliPy = Join-Path $RepoDir "fantasia.py"
+    $BinDir = Join-Path $HOME ".local\bin"
+    New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
+    $CliBat = Join-Path $BinDir "fantasia.cmd"
+    # .cmd shim so `fantasia` resolves on PATH like any terminal command
+    @("@echo off", "\"$CliPy\" %*") | Set-Content -Path $CliBat -Encoding Ascii
+    Write-Host "   ✅ Installed -> $CliBat"
+    Write-Host "   ⚠️  Add $BinDir to your PATH if it isn't already."
+    Write-Host "   Try: fantasia health"
 }
 
 # ── 2. Discover agent workspaces ────────────────────────────────────────────
@@ -99,4 +115,4 @@ if (-not $NoSkill) {
 Write-Host ""
 Write-Host "✅ Open Fantasia install complete."
 Write-Host "   CLI:  $RepoDir\fantasia.py"
-Write-Host "   Try:  python fantasia.py health"
+Write-Host "   Try:  fantasia health" (or python fantasia.py health)

@@ -93,18 +93,40 @@ to free VRAM, and reloads them on the next image request.
 
 ## Quick Start
 
+### One-command install (Linux / macOS / WSL)
+
+Fetch the installer and run it — it installs the repo, dependencies, spins up the
+Fantasia server, and installs the skill into your agent workspaces (after approval):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fabiopacifici-bot/open-fantasia-imagegen/master/install.sh | bash
+```
+
+Or clone and run it locally:
+
 ```bash
 git clone https://github.com/fabiopacifici-bot/open-fantasia-imagegen
 cd open-fantasia-imagegen
-cp .env.example .env   # add your HF_TOKEN
-bash setup.sh
+bash install.sh            # server + deps + global CLI + skill install
+bash install.sh --yes      # skip the approval prompts
+bash install.sh --no-skill # skip skill install
+bash install.sh --no-server # skip server, just install skill/CLI
 ```
 
-`setup.sh` will:
-1. Create a Python venv and install dependencies
-2. Download the recommended model (~16GB, one-time)
-3. Install and enable the systemd service
-4. Start the server at `http://localhost:8765`
+### Windows (PowerShell)
+
+```powershell
+powershell -ExecutionPolicy Bypass -Command "Invoke-WebRequest https://raw.githubusercontent.com/fabiopacifici-bot/open-fantasia-imagegen/master/install.ps1 -OutFile install.ps1; .\install.ps1"
+```
+
+### What it does
+
+1. Creates a Python venv and installs dependencies
+2. Downloads the recommended model (~16GB, one-time)
+3. Installs and enables the systemd service
+4. Starts the server at `http://localhost:8765`
+5. Installs the global `fantasia` command on your PATH
+6. Discovers OpenClaw + kernel-evolving workspaces and installs the skill (after approval)
 
 ---
 
