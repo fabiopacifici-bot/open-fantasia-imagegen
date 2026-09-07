@@ -65,7 +65,7 @@ curl -X POST http://localhost:8765/video \
   -d '{"prompt":"a cat walking through a neon city at night","quality":"mid"}'
 ```
 
-Returns raw `video/mp4` bytes. Saved to `~/.openclaw/media/fantasia/videos/<timestamp>.mp4`.
+Returns raw `video/mp4` bytes. Saved to `~/.fantasia/media/videos/<timestamp>.mp4`.
 
 | Field | Default | Notes |
 |-------|---------|-------|
@@ -181,7 +181,7 @@ systemctl --user status fantasia.service
 journalctl --user -u fantasia.service -f
 ```
 
-Output images are saved to `~/.openclaw/media/fantasia/`.
+Output images are saved to `~/.fantasia/media/`.
 
 ---
 

@@ -370,7 +370,7 @@ def _do_generate(req: GenerateRequest):
     )
     if not is_flux:
         kwargs["guidance_scale"] = req.guidance
-    out_dir = os.path.expanduser("~/.openclaw/media/fantasia")
+    out_dir = os.path.expanduser("~/.fantasia/media")
     os.makedirs(out_dir, exist_ok=True)
     from PIL import Image
     import datetime
@@ -439,7 +439,7 @@ class EditRequest(BaseModel):
     @property
     def safe_image_path(self) -> str:
         allowed = [
-            os.path.expanduser("~/.openclaw/media/fantasia"),
+            os.path.expanduser("~/.fantasia/media"),
             os.path.expanduser("~/.openclaw/media/inbound"),
         ]
         abs_path = os.path.realpath(self.image)
@@ -525,7 +525,7 @@ def generate_video(req: VideoRequest):
 
     print(f'Generating video [{req.quality}] {w}x{h} {nf}f @ {s} steps — "{req.prompt}"')
 
-    out_dir = os.path.expanduser("~/.openclaw/media/fantasia/videos")
+    out_dir = os.path.expanduser("~/.fantasia/media/videos")
     os.makedirs(out_dir, exist_ok=True)
     import datetime
 

@@ -16,7 +16,7 @@ set -euo pipefail
 
 REPO_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 VENV="$REPO_DIR/.venv"
-MEDIA_DIR="$HOME/.openclaw/media/fantasia"
+MEDIA_DIR="$HOME/.fantasia/media"
 SKILL_SRC="$REPO_DIR/skills/fantasia"
 
 ASSUME_YES=false

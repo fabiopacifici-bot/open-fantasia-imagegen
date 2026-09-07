@@ -21,7 +21,7 @@ DEFAULT_BASE_URL = os.environ.get("FANTASIA_BASE_URL", "http://127.0.0.1:8765")
 
 # CLI lives at repo root (next to server/, skills/, setup.sh).
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-MEDIA_DIR = os.path.expanduser("~/.openclaw/media/fantasia")
+MEDIA_DIR = os.path.expanduser("~/.fantasia/media")
 
 
 def _http_json(method: str, url: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:

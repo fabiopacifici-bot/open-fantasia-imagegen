@@ -1,28 +1,43 @@
 ---
 name: open-fantasia-imagegen
-description: Local image AND video generation with FLUX, Stable Diffusion, and Wan2.1. Generate images or short videos from text prompts on your GPU.
+description: Generate images and short videos locally on GPU with FLUX, Stable Diffusion, and Wan2.1.
+user-invocable: true
 metadata:
-  version: 1.4.0
-  commands:
-    - /fantasia
+  openclaw:
+    version: 1.4.0
+    requires:
+      bins: [python3]
 ---
 
 # Open Fantasia — Image & Video Generation Skill
 
-## Slash Command
-`/fantasia <prompt> [--quality low|mid|high] [--model schnell|klein|sd15|turbo] [--count 1-4] [--raw|--enhance]`
+Generate images and short videos locally on GPU using the persistent Open Fantasia inference server. Models stay loaded in VRAM — near-instant generation after first startup.
 
-## Description
-Generate images and short videos locally on GPU using the persistent Open Fantasia inference server.
-Models stay loaded in VRAM — near-instant generation after first startup.
 - Default image model: **FLUX.1-schnell BF16** (~16GB VRAM, ~33GB disk).
 - Default video model: **Wan-AI/Wan2.1-T2V-1.3B** (~8.19GB VRAM, 480P, ~4min/5s clip on an RTX 4090).
 
+## Slash Command
+
+`/fantasia <prompt> [--quality low|mid|high] [--model schnell|klein|sd15|turbo] [--count 1-4] [--raw|--enhance]`
+
+## CLI (preferred)
+
+The repo ships a dependency-free CLI at `{baseDir}/../../fantasia.py` (or the repo root `fantasia.py`). Prefer it over raw curl — it returns JSON and handles the server URL:
+
+```bash
+python3 fantasia.py image  --prompt "a robot cat" --quality low --count 2
+python3 fantasia.py video  --prompt "a robot cat walking" --quality mid --seconds 5
+python3 fantasia.py health
+python3 fantasia.py models
+python3 fantasia.py setup
+```
+
 ## First-Time Setup
+
 ```bash
 cd repositories/open-fantasia-imagegen
 cp .env.example .env   # add your HF_TOKEN
-bash setup.sh
+bash install.sh        # or setup.sh
 ```
 This installs dependencies, downloads the recommended model, and starts the server as a systemd service.
 
@@ -47,7 +62,7 @@ POST http://localhost:8765/video
 ```
 
 **Response:** raw `video/mp4` bytes with `X-Saved-Paths` header.
-Saved to `~/.openclaw/media/fantasia/videos/<timestamp>.mp4`.
+Saved to `~/.fantasia/media/videos/<timestamp>.mp4`.
 
 | Field | Default | Notes |
 |-------|---------|-------|
@@ -63,6 +78,7 @@ Saved to `~/.openclaw/media/fantasia/videos/<timestamp>.mp4`.
 ---
 
 ## Usage Examples
+
 ```
 /fantasia a samurai cat at sunset
 /fantasia cyberpunk city at night --quality high
@@ -74,6 +90,7 @@ Saved to `~/.openclaw/media/fantasia/videos/<timestamp>.mp4`.
 ```
 
 ## Flags
+
 | Flag            | Behaviour |
 |-----------------|-----------|
 | `--raw`         | Prompt sent directly to the model — no enhancement. |
@@ -83,6 +100,7 @@ Saved to `~/.openclaw/media/fantasia/videos/<timestamp>.mp4`.
 | `--quality X`   | `low` / `mid` / `high` (see presets below). |
 
 ## Models
+
 | Flag | Model | VRAM | Notes |
 |------|-------|------|-------|
 | `schnell` (default) | `black-forest-labs/FLUX.1-schnell` | ~16GB | Best quality, BF16 precision |
@@ -91,6 +109,7 @@ Saved to `~/.openclaw/media/fantasia/videos/<timestamp>.mp4`.
 | `turbo` | `stabilityai/sd-turbo` | ~4GB | Near-instant, ~1-3s at 512×512 |
 
 ## Quality Presets
+
 | Flag      | Resolution  | Steps | Approx. Speed       |
 |-----------|-------------|-------|---------------------|
 | `--quality low`  | 512×512   | 4   | ~1-5 min (GPU dependent)  |
@@ -104,7 +123,7 @@ Default: `low`
 ## Agent Instructions
 
 ### When `/fantasia setup` is called:
-Run `bash setup.sh` in the repo directory and report the result. If the server starts successfully, confirm with a health check.
+Run `bash install.sh` (or `bash setup.sh`) in the repo directory and report the result. If the server starts successfully, confirm with a health check: `python3 fantasia.py health` or `curl http://localhost:8765/health`.
 
 ### When `/fantasia` is called WITHOUT a prompt:
 Send this formatted message with inline buttons:
@@ -143,7 +162,7 @@ Row 3 — Count:
 ### ⚠️ ALWAYS spawn generation as a background subagent
 Never poll generation synchronously in the main session — it blocks the chat.
 Use `sessions_spawn` with `runtime="subagent"`, `mode="run"` for all generation requests.
-The subagent handles the curl, waits for the image, sends it via Telegram, then exits.
+The subagent handles the request, waits for the image, sends it via Telegram, then exits.
 Main session stays responsive throughout.
 
 ### When `/fantasia` is called WITH a prompt:
@@ -163,7 +182,7 @@ Main session stays responsive throughout.
    ```json
    {"prompt": "<prompt>", "quality": "<quality>", "enhance": <bool>, "count": <N>}
    ```
-   Server saves all images to `~/.openclaw/media/fantasia/<timestamp>_<i>.png`
+   Server saves all images to `~/.fantasia/media/<timestamp>_<i>.png`
 8. Send each image via Telegram with caption: `🎨 /fantasia — <short prompt preview> [<i>/<N>]`
 
 ---
@@ -174,7 +193,7 @@ Main session stays responsive throughout.
 ```bash
 cd repositories/open-fantasia-imagegen
 cp .env.example .env   # add your HF_TOKEN
-bash setup.sh
+bash install.sh
 ```
 
 ### Manual
@@ -189,7 +208,7 @@ Service file: `~/.config/systemd/user/fantasia.service`
 ### Manual fallback (no systemd)
 ```bash
 cd repositories/open-fantasia-imagegen
-.venv/bin/python src/server.py --model black-forest-labs/FLUX.1-schnell
+.venv/bin/python server/server.py --model black-forest-labs/FLUX.1-schnell
 ```
 
 ## Requirements
@@ -199,8 +218,8 @@ cd repositories/open-fantasia-imagegen
 - ~33GB disk space for default BF16 model (one-time download); ~4GB for sd15/turbo
 
 ## Output Location
-`~/.openclaw/media/fantasia/`
-On Windows WSL: `\\wsl$\kali-linux\home\<user>\.openclaw\media\fantasia\`
+`~/.fantasia/media/`
+On Windows WSL: `\\wsl$\kali-linux\home\<user>\.fantasia\media\`
 
 ---
 
