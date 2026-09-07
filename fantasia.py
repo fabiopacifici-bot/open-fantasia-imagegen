@@ -19,7 +19,8 @@ from urllib import error, request
 
 DEFAULT_BASE_URL = os.environ.get("FANTASIA_BASE_URL", "http://127.0.0.1:8765")
 
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# CLI lives at repo root (next to server/, skills/, setup.sh).
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 MEDIA_DIR = os.path.expanduser("~/.openclaw/media/fantasia")
 
 

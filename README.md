@@ -189,11 +189,19 @@ Output images are saved to `~/.openclaw/media/fantasia/`.
 
 ```
 open-fantasia-imagegen/
-├── src/
+├── server/
 │   ├── server.py       # FastAPI inference server
-│   └── imagegen.py     # Pipeline loader + generation logic
+│   ├── imagegen.py     # Pipeline loader + generation logic
+│   └── videogen.py     # Wan2.1 text-to-video pipeline
+├── skills/
+│   └── fantasia/       # Portable agent skill (SKILL.md + scripts)
+│       ├── SKILL.md
+│       └── scripts/
+├── fantasia.py         # Agent CLI (image/video/health/models/setup)
+├── install.sh          # Linux/macOS/WSL install + skill deploy
+├── install.ps1         # Windows (PowerShell) install + skill deploy
 ├── assets/             # README demo images
-├── setup.sh            # First-time setup script
+├── setup.sh            # Legacy first-time setup script
 ├── .env.example        # Environment variable template
 ├── requirements.txt
 └── .specs/             # Plans, docs, debugging notes

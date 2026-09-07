@@ -55,7 +55,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=$REPO_DIR
-ExecStart=$VENV/bin/python src/server.py --model black-forest-labs/FLUX.1-schnell
+ExecStart=$VENV/bin/python server/server.py --model black-forest-labs/FLUX.1-schnell
 Restart=on-failure
 RestartSec=5
 Environment=HF_TOKEN=${HF_TOKEN:-}

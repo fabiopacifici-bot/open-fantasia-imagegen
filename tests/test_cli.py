@@ -2,9 +2,9 @@ import os
 import sys
 import unittest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import fantasia_cli as cli
+import fantasia as cli
 
 
 class TestFantasiaCliPayloads(unittest.TestCase):

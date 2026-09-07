@@ -3,8 +3,8 @@ Open Fantasia — persistent inference server.
 Loads the model once, serves /generate requests instantly.
 
 Usage:
-    python src/server.py --model stable-diffusion-v1-5/stable-diffusion-v1-5
-    python src/server.py  # uses SD 1.5 by default
+    python server/server.py --model stable-diffusion-v1-5/stable-diffusion-v1-5
+    python server/server.py  # uses SD 1.5 by default
 
 POST /generate
     { "prompt": "...", "quality": "mid", "seed": 42, "enhance": true, "quant": "autoquant" }
