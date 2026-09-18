@@ -65,7 +65,7 @@ curl -X POST http://localhost:8765/video \
   -d '{"prompt":"a cat walking through a neon city at night","quality":"mid"}'
 ```
 
-Returns raw `video/mp4` bytes. Saved to `~/.openclaw/media/fantasia/videos/<timestamp>.mp4`.
+Returns raw `video/mp4` bytes. Saved to `~/.fantasia/media/videos/<timestamp>.mp4`.
 
 | Field | Default | Notes |
 |-------|---------|-------|
@@ -93,18 +93,40 @@ to free VRAM, and reloads them on the next image request.
 
 ## Quick Start
 
+### One-command install (Linux / macOS / WSL)
+
+Fetch the installer and run it — it installs the repo, dependencies, spins up the
+Fantasia server, and installs the skill into your agent workspaces (after approval):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fabiopacifici-bot/open-fantasia-imagegen/master/install.sh | bash
+```
+
+Or clone and run it locally:
+
 ```bash
 git clone https://github.com/fabiopacifici-bot/open-fantasia-imagegen
 cd open-fantasia-imagegen
-cp .env.example .env   # add your HF_TOKEN
-bash setup.sh
+bash install.sh            # server + deps + global CLI + skill install
+bash install.sh --yes      # skip the approval prompts
+bash install.sh --no-skill # skip skill install
+bash install.sh --no-server # skip server, just install skill/CLI
 ```
 
-`setup.sh` will:
-1. Create a Python venv and install dependencies
-2. Download the recommended model (~16GB, one-time)
-3. Install and enable the systemd service
-4. Start the server at `http://localhost:8765`
+### Windows (PowerShell)
+
+```powershell
+powershell -ExecutionPolicy Bypass -Command "Invoke-WebRequest https://raw.githubusercontent.com/fabiopacifici-bot/open-fantasia-imagegen/master/install.ps1 -OutFile install.ps1; .\install.ps1"
+```
+
+### What it does
+
+1. Creates a Python venv and installs dependencies
+2. Downloads the recommended model (~16GB, one-time)
+3. Installs and enables the systemd service
+4. Starts the server at `http://localhost:8765`
+5. Installs the global `fantasia` command on your PATH
+6. Discovers OpenClaw + kernel-evolving workspaces and installs the skill (after approval)
 
 ---
 
@@ -181,7 +203,7 @@ systemctl --user status fantasia.service
 journalctl --user -u fantasia.service -f
 ```
 
-Output images are saved to `~/.openclaw/media/fantasia/`.
+Output images are saved to `~/.fantasia/media/`.
 
 ---
 
@@ -189,11 +211,19 @@ Output images are saved to `~/.openclaw/media/fantasia/`.
 
 ```
 open-fantasia-imagegen/
-├── src/
+├── server/
 │   ├── server.py       # FastAPI inference server
-│   └── imagegen.py     # Pipeline loader + generation logic
+│   ├── imagegen.py     # Pipeline loader + generation logic
+│   └── videogen.py     # Wan2.1 text-to-video pipeline
+├── skills/
+│   └── fantasia/       # Portable agent skill (SKILL.md + scripts)
+│       ├── SKILL.md
+│       └── scripts/
+├── fantasia.py         # Agent CLI (image/video/health/models/setup)
+├── install.sh          # Linux/macOS/WSL install + skill deploy
+├── install.ps1         # Windows (PowerShell) install + skill deploy
 ├── assets/             # README demo images
-├── setup.sh            # First-time setup script
+├── setup.sh            # Legacy first-time setup script
 ├── .env.example        # Environment variable template
 ├── requirements.txt
 └── .specs/             # Plans, docs, debugging notes

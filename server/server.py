@@ -3,8 +3,8 @@ Open Fantasia — persistent inference server.
 Loads the model once, serves /generate requests instantly.
 
 Usage:
-    python src/server.py --model stable-diffusion-v1-5/stable-diffusion-v1-5
-    python src/server.py  # uses SD 1.5 by default
+    python server/server.py --model stable-diffusion-v1-5/stable-diffusion-v1-5
+    python server/server.py  # uses SD 1.5 by default
 
 POST /generate
     { "prompt": "...", "quality": "mid", "seed": 42, "enhance": true, "quant": "autoquant" }
@@ -370,7 +370,7 @@ def _do_generate(req: GenerateRequest):
     )
     if not is_flux:
         kwargs["guidance_scale"] = req.guidance
-    out_dir = os.path.expanduser("~/.openclaw/media/fantasia")
+    out_dir = os.path.expanduser("~/.fantasia/media")
     os.makedirs(out_dir, exist_ok=True)
     from PIL import Image
     import datetime
@@ -439,7 +439,7 @@ class EditRequest(BaseModel):
     @property
     def safe_image_path(self) -> str:
         allowed = [
-            os.path.expanduser("~/.openclaw/media/fantasia"),
+            os.path.expanduser("~/.fantasia/media"),
             os.path.expanduser("~/.openclaw/media/inbound"),
         ]
         abs_path = os.path.realpath(self.image)
@@ -525,7 +525,7 @@ def generate_video(req: VideoRequest):
 
     print(f'Generating video [{req.quality}] {w}x{h} {nf}f @ {s} steps — "{req.prompt}"')
 
-    out_dir = os.path.expanduser("~/.openclaw/media/fantasia/videos")
+    out_dir = os.path.expanduser("~/.fantasia/media/videos")
     os.makedirs(out_dir, exist_ok=True)
     import datetime
 

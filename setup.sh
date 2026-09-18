@@ -9,7 +9,7 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV="$REPO_DIR/.venv"
 SERVICE_FILE="$HOME/.config/systemd/user/fantasia.service"
-MEDIA_DIR="$HOME/.openclaw/media/fantasia"
+MEDIA_DIR="$HOME/.fantasia/media"
 
 FORCE=false
 while [[ $# -gt 0 ]]; do
@@ -55,7 +55,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=$REPO_DIR
-ExecStart=$VENV/bin/python src/server.py --model black-forest-labs/FLUX.1-schnell
+ExecStart=$VENV/bin/python server/server.py --model black-forest-labs/FLUX.1-schnell
 Restart=on-failure
 RestartSec=5
 Environment=HF_TOKEN=${HF_TOKEN:-}
