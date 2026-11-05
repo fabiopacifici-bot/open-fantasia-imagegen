@@ -15,3 +15,5 @@ qwen-vl-utils
 psutil
 imageio
 imageio-ffmpeg
+protobuf
+protobuf>=4.25
